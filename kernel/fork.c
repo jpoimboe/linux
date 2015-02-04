@@ -77,6 +77,7 @@
 #include <linux/compiler.h>
 #include <linux/sysctl.h>
 #include <linux/kcov.h>
+#include <linux/livepatch.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -1771,6 +1772,8 @@ static __latent_entropy struct task_struct *copy_process(
 		p->real_parent = current;
 		p->parent_exec_id = current->self_exec_id;
 	}
+
+	klp_copy_process(p);
 
 	spin_lock(&current->sighand->siglock);
 

@@ -14,6 +14,7 @@
 #include <linux/rbtree.h>
 #include <net/net_namespace.h>
 #include <linux/sched/rt.h>
+#include <linux/livepatch.h>
 
 #include <asm/thread_info.h>
 
@@ -202,6 +203,13 @@ extern struct task_group root_task_group;
 # define INIT_KASAN(tsk)
 #endif
 
+#ifdef CONFIG_LIVEPATCH
+# define INIT_LIVEPATCH(tsk)						\
+	.patch_state = KLP_UNDEFINED,
+#else
+# define INIT_LIVEPATCH(tsk)
+#endif
+
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 # define INIT_TASK_TI(tsk)			\
 	.thread_info = INIT_THREAD_INFO(tsk),	\
@@ -288,6 +296,7 @@ extern struct task_group root_task_group;
 	INIT_VTIME(tsk)							\
 	INIT_NUMA_BALANCING(tsk)					\
 	INIT_KASAN(tsk)							\
+	INIT_LIVEPATCH(tsk)						\
 }
 
 
