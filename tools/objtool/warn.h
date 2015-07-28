@@ -57,4 +57,10 @@ static inline char *offstr(struct section *sec, unsigned long offset)
 	free(_str);					\
 })
 
+#define WARN_PTR(format, sec, ptr, ...)			\
+({							\
+	WARN("%s+0x%lx: " format, sec->name, ptr - sec->data, \
+		##__VA_ARGS__);				\
+})
+
 #endif /* _WARN_H */

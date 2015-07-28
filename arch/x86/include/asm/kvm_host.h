@@ -1313,7 +1313,6 @@ asmlinkage void kvm_spurious_fault(void);
 	cleanup_insn "\n\t"		      \
 	"cmpb $0, kvm_rebooting \n\t"	      \
 	"jne 668b \n\t"      		      \
-	__ASM_SIZE(push) " $666b \n\t"	      \
 	"call kvm_spurious_fault \n\t"	      \
 	".popsection \n\t" \
 	_ASM_EXTABLE(666b, 667b)

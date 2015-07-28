@@ -186,9 +186,9 @@ HashKey_8_k    = 16*26   # store XOR of HashKey^8 <<1 mod poly here (for Karatsu
 #define arg4 %rcx
 #define arg5 %r8
 #define arg6 %r9
-#define arg7 STACK_OFFSET+8*1(%r14)
-#define arg8 STACK_OFFSET+8*2(%r14)
-#define arg9 STACK_OFFSET+8*3(%r14)
+#define arg7 STACK_OFFSET+8*1(%rbp)
+#define arg8 STACK_OFFSET+8*2(%rbp)
+#define arg9 STACK_OFFSET+8*3(%rbp)
 
 i = 0
 j = 0
@@ -352,7 +352,7 @@ VARIABLE_OFFSET = 16*8
 ## num_initial_blocks = b mod 4#
 ## encrypt the initial num_initial_blocks blocks and apply ghash on the ciphertext
 ## r10, r11, r12, rax are clobbered
-## arg1, arg2, arg3, r14 are used as a pointer only, not modified
+## arg1, arg2, arg3, rbp are used as a pointer only, not modified
 
 .macro INITIAL_BLOCKS_AVX num_initial_blocks T1 T2 T3 T4 T5 CTR XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 T6 T_key ENC_DEC
 	i = (8-\num_initial_blocks)
@@ -1143,19 +1143,15 @@ _initial_blocks_done\@:
 
 # combined for GCM encrypt and decrypt functions
 # clobbering all xmm registers
-# clobbering r10, r11, r12, r13, r14, r15
+# clobbering rbp, r10, r11, r12, r13, r15
 .macro  GCM_ENC_DEC_AVX     ENC_DEC
 
         #the number of pushes must equal STACK_OFFSET
         push    %r12
         push    %r13
-        push    %r14
         push    %r15
-
-        mov     %rsp, %r14
-
-
-
+        push    %rbp
+        mov     %rsp, %rbp
 
         sub     $VARIABLE_OFFSET, %rsp
         and     $~63, %rsp                  # align rsp to 64 bytes
@@ -1430,10 +1426,8 @@ _T_16\@:
         vmovdqu %xmm9, (%r10)
 
 _return_T_done\@:
-        mov     %r14, %rsp
-
+        leaveq
         pop     %r15
-        pop     %r14
         pop     %r13
         pop     %r12
 .endm
@@ -1448,12 +1442,9 @@ ENTRY(aesni_gcm_precomp_avx_gen2)
         #the number of pushes must equal STACK_OFFSET
         push    %r12
         push    %r13
-        push    %r14
         push    %r15
-
-        mov     %rsp, %r14
-
-
+        push    %rbp
+        mov     %rsp, %rbp
 
         sub     $VARIABLE_OFFSET, %rsp
         and     $~63, %rsp                  # align rsp to 64 bytes
@@ -1480,10 +1471,8 @@ ENTRY(aesni_gcm_precomp_avx_gen2)
 
         PRECOMPUTE_AVX  %xmm6, %xmm0, %xmm1, %xmm2, %xmm3, %xmm4, %xmm5
 
-        mov     %r14, %rsp
-
+        leaveq
         pop     %r15
-        pop     %r14
         pop     %r13
         pop     %r12
         ret
@@ -1611,7 +1600,7 @@ ENDPROC(aesni_gcm_dec_avx_gen2)
 ## num_initial_blocks = b mod 4#
 ## encrypt the initial num_initial_blocks blocks and apply ghash on the ciphertext
 ## r10, r11, r12, rax are clobbered
-## arg1, arg2, arg3, r14 are used as a pointer only, not modified
+## arg1, arg2, arg3, rbp are used as a pointer only, not modified
 
 .macro INITIAL_BLOCKS_AVX2 num_initial_blocks T1 T2 T3 T4 T5 CTR XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 XMM7 XMM8 T6 T_key ENC_DEC VER
 	i = (8-\num_initial_blocks)
@@ -2420,19 +2409,15 @@ _initial_blocks_done\@:
 
 # combined for GCM encrypt and decrypt functions
 # clobbering all xmm registers
-# clobbering r10, r11, r12, r13, r14, r15
+# clobbering rbp, r10, r11, r12, r13, r15
 .macro  GCM_ENC_DEC_AVX2     ENC_DEC
 
         #the number of pushes must equal STACK_OFFSET
         push    %r12
         push    %r13
-        push    %r14
         push    %r15
-
-        mov     %rsp, %r14
-
-
-
+        push    %rbp
+        mov     %rsp, %rbp
 
         sub     $VARIABLE_OFFSET, %rsp
         and     $~63, %rsp                         # align rsp to 64 bytes
@@ -2705,10 +2690,8 @@ _T_16\@:
         vmovdqu %xmm9, (%r10)
 
 _return_T_done\@:
-        mov     %r14, %rsp
-
+        leaveq
         pop     %r15
-        pop     %r14
         pop     %r13
         pop     %r12
 .endm
@@ -2724,12 +2707,9 @@ ENTRY(aesni_gcm_precomp_avx_gen4)
         #the number of pushes must equal STACK_OFFSET
         push    %r12
         push    %r13
-        push    %r14
         push    %r15
-
-        mov     %rsp, %r14
-
-
+        push    %rbp
+        mov     %rsp, %rbp
 
         sub     $VARIABLE_OFFSET, %rsp
         and     $~63, %rsp                    # align rsp to 64 bytes
@@ -2756,10 +2736,8 @@ ENTRY(aesni_gcm_precomp_avx_gen4)
 
         PRECOMPUTE_AVX2  %xmm6, %xmm0, %xmm1, %xmm2, %xmm3, %xmm4, %xmm5
 
-        mov     %r14, %rsp
-
+        leaveq
         pop     %r15
-        pop     %r14
         pop     %r13
         pop     %r12
         ret

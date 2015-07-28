@@ -13,10 +13,8 @@
 #include <asm/page_types.h>
 
 #define SAVE_XMM			\
-	mov %rsp, %rax;			\
 	subq $0x70, %rsp;		\
 	and $~0xf, %rsp;		\
-	mov %rax, (%rsp);		\
 	mov %cr0, %rax;			\
 	clts;				\
 	mov %rax, 0x8(%rsp);		\
@@ -35,8 +33,7 @@
 	movaps 0x20(%rsp), %xmm4;	\
 	movaps 0x10(%rsp), %xmm5;	\
 	mov 0x8(%rsp), %rsi;		\
-	mov %rsi, %cr0;			\
-	mov (%rsp), %rsp
+	mov %rsi, %cr0
 
 ENTRY(efi_call)
 	pushq %rbp
@@ -52,6 +49,6 @@ ENTRY(efi_call)
 	call *%rdi
 	addq $48, %rsp
 	RESTORE_XMM
-	popq %rbp
+	leaveq
 	ret
 ENDPROC(efi_call)

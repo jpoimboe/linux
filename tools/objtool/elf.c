@@ -350,12 +350,6 @@ struct elf *elf_open(const char *name)
 
 	INIT_LIST_HEAD(&elf->sections);
 
-	elf->name = strdup(name);
-	if (!elf->name) {
-		perror("strdup");
-		goto err;
-	}
-
 	elf->fd = open(name, O_RDONLY);
 	if (elf->fd == -1) {
 		perror("open");
@@ -409,8 +403,6 @@ void elf_close(struct elf *elf)
 		list_del(&sec->list);
 		free(sec);
 	}
-	if (elf->name)
-		free(elf->name);
 	if (elf->fd > 0)
 		close(elf->fd);
 	if (elf->elf)

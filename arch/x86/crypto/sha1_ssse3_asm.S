@@ -75,9 +75,8 @@
 
 	push	%rbx
 	push	%rbp
-	push	%r12
 
-	mov	%rsp, %r12
+	mov	%rsp, %rbp
 	sub	$64, %rsp		# allocate workspace
 	and	$~15, %rsp		# align stack
 
@@ -99,10 +98,7 @@
 	xor	%rax, %rax
 	rep stosq
 
-	mov	%r12, %rsp		# deallocate workspace
-
-	pop	%r12
-	pop	%rbp
+	leaveq				# deallocate workspace
 	pop	%rbx
 	ret
 

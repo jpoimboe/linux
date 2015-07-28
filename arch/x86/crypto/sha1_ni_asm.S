@@ -59,8 +59,6 @@
 #define DATA_PTR	%rsi	/* 2nd arg */
 #define NUM_BLKS	%rdx	/* 3rd arg */
 
-#define RSPSAVE		%rax
-
 /* gcc conversion */
 #define FRAME_SIZE	32	/* space for 2x16 bytes */
 
@@ -96,7 +94,8 @@
 .text
 .align 32
 ENTRY(sha1_ni_transform)
-	mov		%rsp, RSPSAVE
+	push		%rbp
+	mov		%rsp, %rbp
 	sub		$FRAME_SIZE, %rsp
 	and		$~0xF, %rsp
 
@@ -288,8 +287,7 @@ ENTRY(sha1_ni_transform)
 	pextrd		$3, E0, 1*16(DIGEST_PTR)
 
 .Ldone_hash:
-	mov		RSPSAVE, %rsp
-
+	leaveq
 	ret
 ENDPROC(sha1_ni_transform)
 

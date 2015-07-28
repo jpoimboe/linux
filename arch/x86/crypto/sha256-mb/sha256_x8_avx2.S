@@ -287,11 +287,11 @@ ENTRY(sha256_x8_avx2)
 	push    %r13
 	push    %r14
 	push    %r15
+	push	%rbp
 
-	mov	%rsp, IDX
+	mov	%rsp, %rbp
 	sub	$FRAMESZ, %rsp
 	and	$~0x1F, %rsp
-	mov	IDX, _rsp(%rsp)
 
 	# Load the pre-transposed incoming digest.
 	vmovdqu	0*SHA256_DIGEST_ROW_SIZE(STATE),a
@@ -426,10 +426,8 @@ Lrounds_16_xx:
 	add	IDX, inp7
 	mov	inp7, _args_data_ptr+7*8(STATE)
 
-	# Postamble
-	mov	_rsp(%rsp), %rsp
-
 	# restore callee-saved clobbered registers
+	leaveq
 	pop     %r15
 	pop     %r14
 	pop     %r13

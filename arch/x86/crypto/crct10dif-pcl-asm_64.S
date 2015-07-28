@@ -70,12 +70,12 @@
 
 ENTRY(crc_t10dif_pcl)
 .align 16
-
 	# adjust the 16-bit initial_crc value, scale it to 32 bits
 	shl	$16, arg1_low32
 
 	# Allocate Stack Space
-	mov     %rsp, %rcx
+	push	%rbp
+	mov	%rsp, %rbp
 	sub	$16*2, %rsp
 	# align stack to 16 byte boundary
 	and     $~(0x10 - 1), %rsp
@@ -366,7 +366,7 @@ _barrett:
 _cleanup:
 	# scale the result back to 16 bits
 	shr	$16, %eax
-	mov     %rcx, %rsp
+	leaveq
 	ret
 
 ########################################################################

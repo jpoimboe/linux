@@ -570,13 +570,13 @@ frame_size = frame_GPRSAVE + GPRSAVE_SIZE
 ########################################################################
 ENTRY(sha512_transform_rorx)
 	# Allocate Stack Space
-	mov	%rsp, %rax
+	push	%rbp
+	mov	%rsp, %rbp
 	sub	$frame_size, %rsp
 	and	$~(0x20 - 1), %rsp
-	mov	%rax, frame_RSPSAVE(%rsp)
+	mov	%rbp, frame_RSPSAVE(%rsp)
 
 	# Save GPRs
-	mov	%rbp, frame_GPRSAVE(%rsp)
 	mov	%rbx, 8*1+frame_GPRSAVE(%rsp)
 	mov	%r12, 8*2+frame_GPRSAVE(%rsp)
 	mov	%r13, 8*3+frame_GPRSAVE(%rsp)
@@ -669,7 +669,6 @@ loop2:
 done_hash:
 
 # Restore GPRs
-	mov	frame_GPRSAVE(%rsp)     ,%rbp
 	mov	8*1+frame_GPRSAVE(%rsp) ,%rbx
 	mov	8*2+frame_GPRSAVE(%rsp) ,%r12
 	mov	8*3+frame_GPRSAVE(%rsp) ,%r13
@@ -677,7 +676,8 @@ done_hash:
 	mov	8*5+frame_GPRSAVE(%rsp) ,%r15
 
 	# Restore Stack Pointer
-	mov	frame_RSPSAVE(%rsp), %rsp
+	mov	frame_RSPSAVE(%rsp), %rbp
+	leaveq
 	ret
 ENDPROC(sha512_transform_rorx)
 

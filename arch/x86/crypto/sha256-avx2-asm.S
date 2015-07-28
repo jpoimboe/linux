@@ -531,16 +531,16 @@ STACK_SIZE	= _RSP      + _RSP_SIZE
 ENTRY(sha256_transform_rorx)
 .align 32
 	pushq	%rbx
-	pushq	%rbp
 	pushq	%r12
 	pushq	%r13
 	pushq	%r14
 	pushq	%r15
+	pushq	%rbp
 
-	mov	%rsp, %rax
+	mov	%rsp, %rbp
 	subq	$STACK_SIZE, %rsp
 	and	$-32, %rsp	# align rsp to 32 byte boundary
-	mov	%rax, _RSP(%rsp)
+	mov	%rbp, _RSP(%rsp)
 
 
 	shl	$6, NUM_BLKS	# convert to bytes
@@ -711,14 +711,12 @@ only_one_block:
 	jmp	do_last_block
 
 done_hash:
-
-	mov	_RSP(%rsp), %rsp
-
+	mov	_RSP(%rsp), %rbp
+	leaveq
 	popq	%r15
 	popq	%r14
 	popq	%r13
 	popq	%r12
-	popq	%rbp
 	popq	%rbx
 	ret
 ENDPROC(sha256_transform_rorx)

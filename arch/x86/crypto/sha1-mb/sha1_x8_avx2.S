@@ -301,9 +301,9 @@ ENTRY(sha1_x8_avx2)
 	push	%r13
 	push	%r14
 	push	%r15
+	push	%rbp
+	mov	%rsp, %rbp
 
-	#save rsp
-	mov	%rsp, RSP_SAVE
 	sub     $FRAMESZ, %rsp
 
 	#align rsp to 32 Bytes
@@ -449,9 +449,8 @@ lloop:
 	################
 	## Postamble
 
-	mov     RSP_SAVE, %rsp
-
 	# restore callee-saved clobbered registers
+	leaveq
 	pop	%r15
 	pop	%r14
 	pop	%r13

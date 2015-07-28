@@ -31,6 +31,8 @@
 
 #include "builtin.h"
 #include "elf.h"
+#include "cfi.h"
+#include "dwarf.h"
 #include "special.h"
 #include "arch.h"
 #include "warn.h"
@@ -39,24 +41,30 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
-#define STATE_FP_SAVED		0x1
-#define STATE_FP_SETUP		0x2
-#define STATE_FENTRY		0x4
-
 struct instruction {
 	struct list_head list;
 	struct hlist_node hash;
 	struct section *sec;
 	unsigned long offset;
-	unsigned int len, state;
+	unsigned int len;
 	unsigned char type;
 	unsigned long immediate;
-	bool alt_group, visited;
+	bool alt_group, visited, ignore, needs_dwarf;
 	struct symbol *call_dest;
 	struct instruction *jump_dest;
 	struct list_head alts;
 	struct symbol *func;
+	struct stack_op stack_op;
+	struct insn_state state; //FIXME should visited go in here?
+	struct cfi_state dwarf_state;
 };
+
+/*
+ * TODO;
+ * zero stack pointer on return
+ * ensure clobbers aren't already undefined
+ * ensure all undefined registers on return
+ */
 
 struct alternative {
 	struct list_head list;
@@ -65,6 +73,7 @@ struct alternative {
 
 struct objtool_file {
 	struct elf *elf;
+	struct dwarf *dwarf;
 	struct list_head insn_list;
 	DECLARE_HASHTABLE(insn_hash, 16);
 	struct section *rodata, *whitelist;
@@ -116,6 +125,9 @@ static struct instruction *next_insn_same_sec(struct objtool_file *file,
 #define sec_for_each_insn_from(file, insn)				\
 	for (; insn; insn = next_insn_same_sec(file, insn))
 
+#define sec_for_each_insn_continue(file, insn)				\
+	for (insn = next_insn_same_sec(file, insn); insn;		\
+	     insn = next_insn_same_sec(file, insn))
 
 /*
  * Check if the function has been manually whitelisted with the
@@ -265,24 +277,37 @@ static int decode_instructions(struct objtool_file *file)
 	unsigned long offset;
 	struct instruction *insn;
 	int ret;
+	bool needs_dwarf;
 
 	list_for_each_entry(sec, &file->elf->sections, list) {
 
 		if (!(sec->sh.sh_flags & SHF_EXECINSTR))
 			continue;
 
+		if (!strcmp(sec->name, ".altinstr_replacement") ||
+		    !strcmp(sec->name, ".altinstr_aux"))
+			needs_dwarf = false;
+		else
+			needs_dwarf = true;
+
 		for (offset = 0; offset < sec->len; offset += insn->len) {
 			insn = malloc(sizeof(*insn));
+			if (!insn) {
+				WARN("malloc failed");
+				return -1;
+			}
 			memset(insn, 0, sizeof(*insn));
 
 			INIT_LIST_HEAD(&insn->alts);
 			insn->sec = sec;
 			insn->offset = offset;
+			insn->needs_dwarf = needs_dwarf;
 
 			ret = arch_decode_instruction(file->elf, sec, offset,
 						      sec->len - offset,
 						      &insn->len, &insn->type,
-						      &insn->immediate);
+						      &insn->immediate,
+						      &insn->stack_op);
 			if (ret)
 				return ret;
 
@@ -333,7 +358,7 @@ static void add_ignores(struct objtool_file *file)
 				continue;
 
 			func_for_each_insn(file, func, insn)
-				insn->visited = true;
+				insn->ignore = true;
 		}
 	}
 }
@@ -351,10 +376,6 @@ static int add_jump_destinations(struct objtool_file *file)
 	for_each_insn(file, insn) {
 		if (insn->type != INSN_JUMP_CONDITIONAL &&
 		    insn->type != INSN_JUMP_UNCONDITIONAL)
-			continue;
-
-		/* skip ignores */
-		if (insn->visited)
 			continue;
 
 		rela = find_rela_by_dest_range(insn->sec, insn->offset,
@@ -853,21 +874,262 @@ static bool is_fentry_call(struct instruction *insn)
 	return false;
 }
 
-static bool has_modified_stack_frame(struct instruction *insn)
+//TODO: arch specific?  or have an arch-specific "initial function" state to compare against?
+static bool has_modified_stack_frame(struct insn_state *state)
 {
-	return (insn->state & STATE_FP_SAVED) ||
-	       (insn->state & STATE_FP_SETUP);
+	struct cfi_state *cfi = &state->cfi;
+
+	return (cfi->cfa.reg != CFI_SP || cfi->cfa.offset != 8 ||
+		state->drap != CFI_UNDEFINED);
 }
 
-static bool has_valid_stack_frame(struct instruction *insn)
+static bool has_valid_stack_frame(struct insn_state *state)
 {
-	return (insn->state & STATE_FP_SAVED) &&
-	       (insn->state & STATE_FP_SETUP);
+	struct cfi_state *cfi = &state->cfi;
+
+	if (cfi->cfa.reg == CFI_BP && cfi->regs[CFI_BP].reg == CFI_CFA &&
+	    cfi->regs[CFI_BP].offset == -16)
+		return true;
+
+	if (state->drap != CFI_UNDEFINED) //FIXME this needs to be a much more stringent check
+		return true;
+
+	return false;
 }
 
-static unsigned int frame_state(unsigned long state)
+#if 0
+//FIXME arch-specific
+const char *reg_name[] = {
+	"rax",
+	"rdx",
+	"rcx",
+	"rbx",
+	"rsi",
+	"rdi",
+	"rbp",
+	"rsp",
+	"r8",
+	"r9",
+	"r10",
+	"r11",
+	"r12",
+	"r13",
+	"r14",
+	"r15",
+	"ra",
+};
+
+static void print_reg(unsigned char reg, struct cfi_state *state,
+		      struct cfi_reg *loc)
 {
-	return (state & (STATE_FP_SAVED | STATE_FP_SETUP));
+	if (loc->base_reg == CFI_UNDEFINED)
+		return;
+	if (reg == CFI_CFA)
+		printf("cfa:");
+	else
+		printf("%s:", reg_name[reg]);
+	if (loc->base_reg == CFI_CFA)
+		printf("c");
+	else
+		printf("%s", reg_name[loc->base_reg]);
+	if ((int)loc->offset >= 0)
+		printf("+%d ", loc->offset);
+	else
+		printf("%d ", loc->offset);
+}
+#endif
+
+// TODO update_reg_state?  change cfi_reg to just reg?
+// FIXME arch-speicfic?
+static int update_insn_state(struct instruction *insn, struct insn_state *state)
+{
+	struct stack_op *op = &insn->stack_op;
+	struct cfi_reg *cfa = &state->cfi.cfa;
+	struct cfi_reg *regs = state->cfi.regs;
+	struct cfi_reg *cfa_store = &state->cfa_store;
+
+	switch (op->dest.type) {
+
+	case OP_DEST_REG:
+		switch(op->src.type) {
+
+		case OP_SRC_REG:
+			/* move SP to FP */
+			if (cfa->reg == op->src.reg) {
+				cfa->reg = op->dest.reg;
+			} else if (state->drap != CFI_UNDEFINED) {
+				regs[CFI_BP].reg = CFI_EXPRESSION;
+				regs[CFI_BP].offset = -cfa_store->offset;
+			} else {
+				WARN_FUNC("unknown stack-related register move",
+					  insn->sec, insn->offset);
+				return -1;
+			}
+			break;
+
+		case OP_SRC_ADD:
+			if (op->dest.reg == CFI_SP && op->src.reg == CFI_SP) {
+				/* add immediate to SP */
+				cfa_store->offset -= op->src.offset;
+				if (cfa->reg == CFI_SP)
+					cfa->offset -= op->src.offset;
+				break;
+			}
+
+			if (op->dest.reg == CFI_SP && op->src.reg == CFI_BP) {
+				cfa_store->offset = -(op->src.offset + regs[CFI_BP].offset);
+				break;
+			}
+
+			if (op->dest.reg != CFI_BP && op->src.reg == CFI_SP &&
+			    cfa->reg == CFI_SP) {
+				/*
+				 * Create a temporary CFA register for stack
+				 * realignment.
+				 */
+				cfa->reg = op->dest.reg;
+				cfa->offset -= op->src.offset;
+				state->drap = cfa->reg;
+				break;
+			}
+
+			if (state->drap != CFI_UNDEFINED &&
+			    op->dest.reg == CFI_SP &&
+			    op->src.reg == state->drap) {  //FIXME drap can be defined just like FP or SP probably
+				/*
+				 * Restore stack pointer back to its original
+				 * value after a stack realignment.
+				 */
+				cfa->reg = CFI_SP;
+				cfa->offset -= op->src.offset;
+				cfa_store->offset = cfa->offset; //FIXME simplify cfa_store stuff?
+				state->drap = CFI_UNDEFINED;
+				break;
+			}
+
+			WARN_FUNC("unknown stack-related add instruction",
+				  insn->sec, insn->offset);
+			return -1;
+
+		case OP_SRC_AND:
+			if (op->dest.reg != CFI_SP || op->src.reg != CFI_SP ||
+			    cfa->reg == CFI_SP) {
+				WARN_FUNC("unknown stack-related 'and' instruction",
+					  insn->sec, insn->offset);
+				return -1;
+			}
+			cfa_store->offset = 0;
+			break;
+
+			//FIXME check if all warnings make sense
+		case OP_SRC_POP:
+			cfa_store->offset -= 8;
+			if (state->drap != CFI_UNDEFINED &&
+			    cfa->reg == CFI_EXPRESSION &&
+			    op->dest.reg == state->drap) {
+				cfa->reg = state->drap;
+				//FIXME hard coded to zero?
+				cfa->offset = 0;
+				break;
+			}
+
+			if (state->drap == CFI_UNDEFINED &&
+			    op->dest.reg == cfa->reg)
+				cfa->reg = CFI_SP;
+
+			if (cfa->reg == CFI_SP)
+				cfa->offset = cfa_store->offset;
+
+			if (regs[op->dest.reg].offset + cfa_store->offset == -8) {
+				regs[op->dest.reg].reg = CFI_UNDEFINED;
+				regs[op->dest.reg].offset = 0;
+			}
+			break;
+
+		case OP_SRC_REG_INDIRECT:
+			if (op->src.reg == cfa->reg &&
+			    op->src.offset == regs[op->dest.reg].offset + cfa->offset) {
+				regs[op->dest.reg].reg = CFI_UNDEFINED;
+				regs[op->dest.reg].offset = 0;
+			}
+			break;
+
+		default:
+			WARN_FUNC("unknown stack-related instruction",
+				  insn->sec, insn->offset);
+			return -1;
+		}
+		break;
+
+	case OP_DEST_PUSH:
+		cfa_store->offset += 8; //TODO
+		if (state->drap != CFI_UNDEFINED &&
+		    op->src.type == OP_SRC_REG && op->src.reg == CFI_BP) {
+			cfa_store->offset = 0; //FIXME this is done for both AND and for PUSH RBP
+			break;
+		}
+		if (cfa->reg == CFI_SP)
+			cfa->offset = cfa_store->offset;
+		/* fallthrough */
+	case OP_DEST_REG_INDIRECT:
+		if (op->src.type != OP_SRC_REG)
+			break;
+
+		if (state->drap != CFI_UNDEFINED) {
+			if (op->src.reg == cfa->reg) {
+				cfa->reg = CFI_EXPRESSION;
+				cfa->offset = -cfa_store->offset;
+			} else if (op->src.reg != CFI_BP &&
+				   regs[op->src.reg].reg == CFI_UNDEFINED) {
+				regs[op->src.reg].reg = CFI_EXPRESSION;
+				regs[op->src.reg].offset = -cfa_store->offset;
+			}
+		} else if (regs[op->src.reg].reg == CFI_UNDEFINED) {
+			regs[op->src.reg].reg = CFI_CFA;
+			regs[op->src.reg].offset = -cfa_store->offset;
+		}
+		break;
+
+	case OP_DEST_LEAVE:
+		if (cfa->reg != CFI_BP) {
+			WARN_FUNC("leave instruction without stack frame pointer setup",
+				  insn->sec, insn->offset);
+			return -1;
+		}
+		regs[CFI_BP].reg = CFI_UNDEFINED;
+		regs[CFI_BP].offset = 0;
+		cfa->reg = CFI_SP;
+		cfa->offset -= 8;
+		cfa_store->offset = cfa->offset;
+		break;
+
+	case OP_DEST_MEM:
+		if (op->src.type != OP_SRC_POP) {
+			WARN_FUNC("unknown stack-related memory operation",
+				  insn->sec, insn->offset);
+			return -1;
+		}
+		cfa_store->offset -= 8;
+		if (cfa->reg == CFI_SP)
+			cfa->offset = cfa_store->offset;
+		break;
+	}
+
+	return 0;
+}
+
+static bool insn_state_match(struct insn_state *state1,
+			     struct insn_state *state2)
+{
+	struct cfi_state *cfi1 = &state1->cfi;
+	struct cfi_state *cfi2 = &state2->cfi;
+
+	/*
+	 * Compare everything except cfa_store... FIXMES
+	 */
+	return !memcmp(&cfi1->cfa, &cfi2->cfa, sizeof(cfi1->cfa)) &&
+	       !memcmp(&cfi1->regs, &cfi2->regs, sizeof(cfi1->regs)) &&
+	       state1->drap == state2->drap;
 }
 
 /*
@@ -876,19 +1138,17 @@ static unsigned int frame_state(unsigned long state)
  * each instruction and validate all the rules described in
  * tools/objtool/Documentation/stack-validation.txt.
  */
-static int validate_branch(struct objtool_file *file,
-			   struct instruction *first, unsigned char first_state)
+static int validate_branch(struct objtool_file *file, struct instruction *first,
+			   struct insn_state state)
 {
 	struct alternative *alt;
 	struct instruction *insn;
 	struct section *sec;
 	struct symbol *func = NULL;
-	unsigned char state;
 	int ret;
 
 	insn = first;
 	sec = insn->sec;
-	state = first_state;
 
 	if (insn->alt_group && list_empty(&insn->alts)) {
 		WARN_FUNC("don't know how to handle branch to middle of alternative instruction group",
@@ -907,9 +1167,10 @@ static int validate_branch(struct objtool_file *file,
 			func = insn->func;
 		}
 
+		//TODO: are registers always either undefined or defined by CFA? if so, it can be simplified.
 		if (insn->visited) {
-			if (frame_state(insn->state) != frame_state(state)) {
-				WARN_FUNC("frame pointer state mismatch",
+			if (!insn_state_match(&state, &insn->state)) {
+				WARN_FUNC("stack state mismatch",
 					  sec, insn->offset);
 				return 1;
 			}
@@ -928,50 +1189,17 @@ static int validate_branch(struct objtool_file *file,
 
 		switch (insn->type) {
 
-		case INSN_FP_SAVE:
-			if (!nofp) {
-				if (state & STATE_FP_SAVED) {
-					WARN_FUNC("duplicate frame pointer save",
-						  sec, insn->offset);
-					return 1;
-				}
-				state |= STATE_FP_SAVED;
-			}
-			break;
-
-		case INSN_FP_SETUP:
-			if (!nofp) {
-				if (state & STATE_FP_SETUP) {
-					WARN_FUNC("duplicate frame pointer setup",
-						  sec, insn->offset);
-					return 1;
-				}
-				state |= STATE_FP_SETUP;
-			}
-			break;
-
-		case INSN_FP_RESTORE:
-			if (!nofp) {
-				if (has_valid_stack_frame(insn))
-					state &= ~STATE_FP_SETUP;
-
-				state &= ~STATE_FP_SAVED;
-			}
-			break;
-
 		case INSN_RETURN:
-			if (!nofp && has_modified_stack_frame(insn)) {
-				WARN_FUNC("return without frame pointer restore",
+			if (has_modified_stack_frame(&state)) {
+				WARN_FUNC("return with modified stack frame",
 					  sec, insn->offset);
 				return 1;
 			}
 			return 0;
 
 		case INSN_CALL:
-			if (is_fentry_call(insn)) {
-				state |= STATE_FENTRY;
+			if (is_fentry_call(insn))
 				break;
-			}
 
 			ret = dead_end_function(file, insn->call_dest);
 			if (ret == 1)
@@ -981,7 +1209,7 @@ static int validate_branch(struct objtool_file *file,
 
 			/* fallthrough */
 		case INSN_CALL_DYNAMIC:
-			if (!nofp && !has_valid_stack_frame(insn)) {
+			if (!nofp && !has_valid_stack_frame(&state)) {
 				WARN_FUNC("call without frame pointer save/setup",
 					  sec, insn->offset);
 				return 1;
@@ -995,8 +1223,8 @@ static int validate_branch(struct objtool_file *file,
 						      state);
 				if (ret)
 					return 1;
-			} else if (has_modified_stack_frame(insn)) {
-				WARN_FUNC("sibling call from callable instruction with changed frame pointer",
+			} else if (has_modified_stack_frame(&state)) {
+				WARN_FUNC("sibling call from callable instruction with modified stack frame",
 					  sec, insn->offset);
 				return 1;
 			} /* else it's a sibling call */
@@ -1008,8 +1236,8 @@ static int validate_branch(struct objtool_file *file,
 
 		case INSN_JUMP_DYNAMIC:
 			if (list_empty(&insn->alts) &&
-			    has_modified_stack_frame(insn)) {
-				WARN_FUNC("sibling call from callable instruction with changed frame pointer",
+			    has_modified_stack_frame(&state)) {
+				WARN_FUNC("sibling call from callable instruction with modified stack frame",
 					  sec, insn->offset);
 				return 1;
 			}
@@ -1018,6 +1246,12 @@ static int validate_branch(struct objtool_file *file,
 
 		case INSN_BUG:
 			return 0;
+
+		case INSN_STACK:
+			if (update_insn_state(insn, &state))
+				return -1;
+
+			break;
 
 		default:
 			break;
@@ -1114,6 +1348,7 @@ static int validate_functions(struct objtool_file *file)
 	struct section *sec;
 	struct symbol *func;
 	struct instruction *insn;
+	struct insn_state state;
 	int ret, warnings = 0;
 
 	list_for_each_entry(sec, &file->elf->sections, list) {
@@ -1122,10 +1357,15 @@ static int validate_functions(struct objtool_file *file)
 				continue;
 
 			insn = find_insn(file, sec, func->offset);
-			if (!insn)
+			if (!insn || insn->ignore)
 				continue;
 
-			ret = validate_branch(file, insn, 0);
+			arch_init_cfi_state(&state.cfi);
+			state.cfa_store.reg = state.cfi.cfa.reg;
+			state.cfa_store.offset = state.cfi.cfa.offset;
+			state.drap = CFI_UNDEFINED;
+
+			ret = validate_branch(file, insn, state);
 			warnings += ret;
 		}
 	}
@@ -1136,10 +1376,10 @@ static int validate_functions(struct objtool_file *file)
 				continue;
 
 			func_for_each_insn(file, func, insn) {
-				if (insn->visited)
+				if (insn->visited || insn->ignore)
 					continue;
 
-				insn->visited = true;
+				insn->ignore = true;
 
 				if (file->ignore_unreachables || warnings ||
 				    ignore_unreachable_insn(func, insn))
@@ -1160,7 +1400,7 @@ static int validate_uncallable_instructions(struct objtool_file *file)
 	int warnings = 0;
 
 	for_each_insn(file, insn) {
-		if (!insn->visited && insn->type == INSN_RETURN) {
+		if (!insn->visited && !insn->ignore && insn->type == INSN_RETURN) {
 			WARN_FUNC("return instruction outside of a callable function",
 				  insn->sec, insn->offset);
 			warnings++;
@@ -1168,6 +1408,180 @@ static int validate_uncallable_instructions(struct objtool_file *file)
 	}
 
 	return warnings;
+}
+
+//FIXME split up cleanup, can probably close elf earlier...
+#if 0
+static int generate_dwarf_cfi(struct elf *elf, bool cfa_only)
+{
+	return 0;
+}
+#endif
+
+struct cfi_lists {
+	struct list_head insn_cfi_list;
+	struct list_head dwarf_cfi_list;
+};
+
+// or should this be get next cfi insn
+#if 0
+static struct instruction *next_insn_with_changed_cfi(struct instruction *insn)
+{
+	struct *prev = insn;
+
+	sec_for_each_insn_from(file, insn)
+		if (!insn->ignore && insn->visited &&
+		    !insn_stack_match(prev->state, insn->state))
+			return insn;
+
+	return NULL;
+}
+#endif
+
+static void update_dwarf_state(struct cfi_state *state,
+			       struct cfi_insn *cfi_insn,
+			       struct cfi_state *remember,
+			       unsigned long *offset)
+{
+	switch (cfi_insn->opcode) {
+
+	case DW_CFA_advance_loc:
+	case DW_CFA_advance_loc1:
+	case DW_CFA_advance_loc2:
+		*offset += cfi_insn->delta;
+		break;
+
+	case DW_CFA_offset:
+		state->regs[cfi_insn->reg].reg = CFI_CFA;
+		state->regs[cfi_insn->reg].offset = cfi_insn->offset;
+		break;
+
+	case DW_CFA_restore:
+		state->regs[cfi_insn->reg].reg = CFI_UNDEFINED;
+		state->regs[cfi_insn->reg].offset = 0;
+		break;
+
+	case DW_CFA_def_cfa:
+		state->cfa.reg = cfi_insn->reg;
+		state->cfa.offset = cfi_insn->offset;
+		break;
+
+	case DW_CFA_def_cfa_register:
+		state->cfa.reg = cfi_insn->reg;
+		break;
+
+	case DW_CFA_def_cfa_offset:
+		state->cfa.offset = cfi_insn->offset;
+		break;
+
+	case DW_CFA_remember_state:
+		memcpy(remember, state, sizeof(*state));
+		break;
+
+	case DW_CFA_restore_state:
+		memcpy(state, remember, sizeof(*state));
+		break;
+
+	case DW_CFA_def_cfa_expression:
+		state->cfa.reg = CFI_EXPRESSION;
+		state->cfa.offset = cfi_insn->offset;
+		break;
+
+	case DW_CFA_expression:
+		state->regs[cfi_insn->reg].reg = CFI_EXPRESSION;
+		state->regs[cfi_insn->reg].reg = cfi_insn->offset;
+		break;
+
+	default:
+		break;
+	}
+}
+
+static int decode_dwarf(struct objtool_file *file)
+{
+	struct instruction *insn;
+	struct dwarf_fde *fde;
+	struct cfi_insn *cfi_insn;
+	struct cfi_state remember;
+	int i;
+
+	//FIXME move this to insn init
+	for_each_insn(file, insn) {
+		insn->dwarf_state.cfa.reg = CFI_UNDEFINED;
+		for (i = 0; i < CFI_NUM_REGS; i++)
+			insn->dwarf_state.regs[i].reg = CFI_UNDEFINED;
+	}
+
+	list_for_each_entry(fde, &file->dwarf->fdes, list) {
+		unsigned long offset = fde->ip_offset;
+
+		insn = find_insn(file, fde->ip_sec, offset);
+		if (!insn) {
+			WARN_FUNC("can't find instruction for DWARF CFI",
+				  fde->ip_sec, offset);
+			return 1;
+		}
+
+		list_for_each_entry(cfi_insn, &fde->cie->cfi_insns, list)
+			update_dwarf_state(&insn->dwarf_state, cfi_insn,
+					   &remember, &offset);
+
+		list_for_each_entry(cfi_insn, &fde->cfi_insns, list) {
+			update_dwarf_state(&insn->dwarf_state, cfi_insn,
+					   &remember, &offset);
+
+			//FIXME convert to while loop
+			if (offset > insn->offset)
+				sec_for_each_insn_continue(file, insn) {
+					memcpy(&insn->dwarf_state,
+					       &list_prev_entry(insn, list)->dwarf_state,
+					       sizeof(insn->dwarf_state));
+					if (insn->offset >= offset)
+						break;
+				}
+
+			if (offset != insn->offset) {
+				WARN_FUNC("can't find instruction for DWARF CFI",
+					  fde->ip_sec, offset);
+				return 1;
+			}
+		}
+
+		//FIXME convert to while loop and/or DRY it up, incudling the WARN_FUNC afterwards
+		if (insn->offset < (fde->ip_offset + fde->ip_len))
+			sec_for_each_insn_continue(file, insn) {
+				memcpy(&insn->dwarf_state,
+				       &list_prev_entry(insn, list)->dwarf_state,
+				       sizeof(insn->dwarf_state));
+				if (insn->offset >= (fde->ip_offset + fde->ip_len))
+					break;
+			}
+	}
+
+	return 0;
+}
+
+//FIXME what about alternatives?
+static int validate_dwarf(struct objtool_file *file)
+{
+	int ret;
+	struct instruction *insn;
+
+	ret = decode_dwarf(file);
+	if (ret)
+		return ret;
+
+	for_each_insn(file, insn) {
+		if (!insn->visited || !insn->needs_dwarf)
+			continue;
+		if (insn->state.cfi.cfa.reg != insn->dwarf_state.cfa.reg ||
+		    insn->state.cfi.cfa.offset != insn->dwarf_state.cfa.offset) {
+			WARN_FUNC("DWARF state mismatch", insn->sec,
+				  insn->offset);
+			return 1;
+		}
+	}
+	return 0;
 }
 
 static void cleanup(struct objtool_file *file)
@@ -1227,12 +1641,24 @@ int cmd_check(int argc, const char **argv)
 		goto out;
 	warnings += ret;
 
+	if (list_empty(&file.insn_list))
+		goto out;
+
 	ret = validate_functions(&file);
 	if (ret < 0)
 		goto out;
 	warnings += ret;
 
 	ret = validate_uncallable_instructions(&file);
+	if (ret < 0)
+		goto out;
+	warnings += ret;
+
+	file.dwarf = dwarf_open(file.elf, false);
+	if (!file.dwarf)
+		goto out;
+
+	ret = validate_dwarf(&file);
 	if (ret < 0)
 		goto out;
 	warnings += ret;

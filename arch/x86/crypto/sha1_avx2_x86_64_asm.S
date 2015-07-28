@@ -625,18 +625,17 @@ _loop3:
 	ENTRY(\name)
 
 	push	%rbx
-	push	%rbp
 	push	%r12
 	push	%r13
 	push	%r14
 	push	%r15
+	push	%rbp
 
 	RESERVE_STACK  = (W_SIZE*4 + 8+24)
 
 	/* Align stack */
-	mov	%rsp, %rbx
+	mov	%rsp, %rbp
 	and	$~(0x20-1), %rsp
-	push	%rbx
 	sub	$RESERVE_STACK, %rsp
 
 	avx2_zeroupper
@@ -662,13 +661,12 @@ _loop3:
 	avx2_zeroupper
 
 	add	$RESERVE_STACK, %rsp
-	pop	%rsp
 
+	leaveq
 	pop	%r15
 	pop	%r14
 	pop	%r13
 	pop	%r12
-	pop	%rbp
 	pop	%rbx
 
 	ret

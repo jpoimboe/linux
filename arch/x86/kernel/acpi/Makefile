@@ -6,3 +6,4 @@ ifneq ($(CONFIG_ACPI_PROCESSOR),)
 obj-y				+= cstate.o
 endif
 
+OBJECT_FILES_NON_STANDARD_wakeup_$(BITS).o := y

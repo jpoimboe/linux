@@ -97,10 +97,10 @@ enc:        .octa 0x2
 #define arg4 rcx
 #define arg5 r8
 #define arg6 r9
-#define arg7 STACK_OFFSET+8(%r14)
-#define arg8 STACK_OFFSET+16(%r14)
-#define arg9 STACK_OFFSET+24(%r14)
-#define arg10 STACK_OFFSET+32(%r14)
+#define arg7 STACK_OFFSET+8(%rbp)
+#define arg8 STACK_OFFSET+16(%rbp)
+#define arg9 STACK_OFFSET+24(%rbp)
+#define arg10 STACK_OFFSET+32(%rbp)
 #define keysize 2*15*16(%arg1)
 #endif
 
@@ -220,7 +220,7 @@ enc:        .octa 0x2
 * the ciphertext
 * %r10, %r11, %r12, %rax, %xmm5, %xmm6, %xmm7, %xmm8, %xmm9 registers
 * are clobbered
-* arg1, %arg2, %arg3, %r14 are used as a pointer only, not modified
+* arg1, %arg2, %arg3, %rbp are used as a pointer only, not modified
 */
 
 
@@ -445,7 +445,7 @@ _initial_blocks_done\num_initial_blocks\operation:
 * the ciphertext
 * %r10, %r11, %r12, %rax, %xmm5, %xmm6, %xmm7, %xmm8, %xmm9 registers
 * are clobbered
-* arg1, %arg2, %arg3, %r14 are used as a pointer only, not modified
+* arg1, %arg2, %arg3, %rbp are used as a pointer only, not modified
 */
 
 
@@ -1283,8 +1283,8 @@ _esb_loop_\@:
 ENTRY(aesni_gcm_dec)
 	push	%r12
 	push	%r13
-	push	%r14
-	mov	%rsp, %r14
+	push	%rbp
+	mov	%rsp, %rbp
 /*
 * states of %xmm registers %xmm6:%xmm15 not saved
 * all %xmm registers are clobbered
@@ -1449,8 +1449,7 @@ _T_12_decrypt:
 _T_16_decrypt:
 	movdqu	%xmm0, (%r10)
 _return_T_done_decrypt:
-	mov	%r14, %rsp
-	pop	%r14
+	leaveq
 	pop	%r13
 	pop	%r12
 	ret
@@ -1543,8 +1542,8 @@ ENDPROC(aesni_gcm_dec)
 ENTRY(aesni_gcm_enc)
 	push	%r12
 	push	%r13
-	push	%r14
-	mov	%rsp, %r14
+	push	%rbp
+	mov	%rsp, %rbp
 #
 # states of %xmm registers %xmm6:%xmm15 not saved
 # all %xmm registers are clobbered
@@ -1713,8 +1712,7 @@ _T_12_encrypt:
 _T_16_encrypt:
 	movdqu	%xmm0, (%r10)
 _return_T_done_encrypt:
-	mov	%r14, %rsp
-	pop	%r14
+	leaveq
 	pop	%r13
 	pop	%r12
 	ret

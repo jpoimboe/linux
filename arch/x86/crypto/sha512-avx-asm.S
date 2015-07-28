@@ -282,10 +282,10 @@ ENTRY(sha512_transform_avx)
 	je nowork
 
 	# Allocate Stack Space
-	mov	%rsp, %rax
+	push	%rbp
+	mov	%rsp, %rbp
 	sub     $frame_size, %rsp
 	and	$~(0x20 - 1), %rsp
-	mov	%rax, frame_RSPSAVE(%rsp)
 
 	# Save GPRs
 	mov     %rbx, frame_GPRSAVE(%rsp)
@@ -361,7 +361,7 @@ updateblock:
 	mov     frame_GPRSAVE +8*4(%rsp), %r15
 
 	# Restore Stack Pointer
-	mov	frame_RSPSAVE(%rsp), %rsp
+	leaveq
 
 nowork:
 	ret
