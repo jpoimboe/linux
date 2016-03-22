@@ -326,7 +326,7 @@ ENDPROC(start_cpu0)
 	GLOBAL(initial_gs)
 	.quad	INIT_PER_CPU_VAR(irq_stack_union)
 	GLOBAL(initial_stack)
-	.quad  init_thread_union+THREAD_SIZE-8
+	.quad  init_thread_union + THREAD_SIZE - SIZEOF_PTREGS
 	__FINITDATA
 
 bad_address:
