@@ -14,6 +14,19 @@ extern int kstack_depth_to_print;
 struct thread_info;
 struct stacktrace_ops;
 
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+
+unsigned long
+ftrace_graph_ret_addr(struct task_struct *task, int *idx, unsigned long addr);
+
+#else
+static inline unsigned long
+ftrace_graph_ret_addr(struct task_struct *task, int *idx, unsigned long addr)
+{
+	return addr;
+}
+#endif /* CONFIG_FUNCTION_GRAPH_TRACER */
+
 typedef unsigned long (*walk_stack_t)(struct task_struct *task,
 				      unsigned long *stack,
 				      unsigned long bp,

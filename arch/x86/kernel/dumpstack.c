@@ -40,36 +40,25 @@ void printk_address(unsigned long address)
 }
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
-static void
-print_ftrace_graph_addr(unsigned long addr, void *data,
-			const struct stacktrace_ops *ops,
-			struct task_struct *task, int *graph)
+unsigned long
+ftrace_graph_ret_addr(struct task_struct *task, int *idx, unsigned long addr)
 {
-	unsigned long ret_addr;
-	int index;
+	int task_idx;
 
 	if (addr != (unsigned long)return_to_handler)
-		return;
+		return addr;
 
-	index = task->curr_ret_stack;
+	task_idx = task->curr_ret_stack;
 
-	if (!task->ret_stack || index < *graph)
-		return;
+	if (!task->ret_stack || task_idx < *idx)
+		return addr;
 
-	index -= *graph;
-	ret_addr = task->ret_stack[index].ret;
+	task_idx -= *idx;
+	(*idx)++;
 
-	ops->address(data, ret_addr, 1);
-
-	(*graph)++;
+	return task->ret_stack[task_idx].ret;
 }
-#else
-static inline void
-print_ftrace_graph_addr(unsigned long addr, void *data,
-			const struct stacktrace_ops *ops,
-			struct task_struct *task, int *graph)
-{ }
-#endif
+#endif /* CONFIG_FUNCTION_GRAPH_TRACER */
 
 /*
  * x86-64 can have up to three kernel stacks:
@@ -108,18 +97,23 @@ print_context_stack(struct task_struct *task,
 		stack = (unsigned long *)task_stack_page(task);
 
 	while (valid_stack_ptr(task, stack, sizeof(*stack), end)) {
-		unsigned long addr;
+		unsigned long addr = *stack;
 
 		addr = *stack;
 		if (__kernel_text_address(addr)) {
+			int reliable = 0;
+			unsigned long real_addr;
+
 			if ((unsigned long) stack == bp + sizeof(long)) {
-				ops->address(data, addr, 1);
+				reliable = 1;
 				frame = frame->next_frame;
 				bp = (unsigned long) frame;
-			} else {
-				ops->address(data, addr, 0);
 			}
-			print_ftrace_graph_addr(addr, data, ops, task, graph);
+
+			real_addr = ftrace_graph_ret_addr(task, graph, addr);
+			if (addr != real_addr)
+				ops->address(data, addr, 0);
+			ops->address(data, real_addr, reliable);
 		}
 		stack++;
 	}
@@ -142,11 +136,11 @@ print_context_stack_bp(struct task_struct *task,
 		if (!__kernel_text_address(addr))
 			break;
 
+		addr = ftrace_graph_ret_addr(task, graph, addr);
 		if (ops->address(data, addr, 1))
 			break;
 		frame = frame->next_frame;
 		ret_addr = &frame->return_address;
-		print_ftrace_graph_addr(addr, data, ops, task, graph);
 	}
 
 	return (unsigned long)frame;
