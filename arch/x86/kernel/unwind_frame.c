@@ -18,6 +18,31 @@ unsigned long unwind_get_return_address(struct unwind_state *state)
 }
 EXPORT_SYMBOL_GPL(unwind_get_return_address);
 
+/*
+ * This determines if the frame pointer actually contains an encoded pointer to
+ * pt_regs on the stack.  See ENCODE_FRAME_POINTER.
+ */
+static struct pt_regs *decode_frame_pointer(struct unwind_state *state,
+					    unsigned long *bp)
+{
+	struct pt_regs *regs = (struct pt_regs *)bp;
+	unsigned long *task_begin = task_stack_page(state->task);
+	unsigned long *task_end   = task_stack_page(state->task) + THREAD_SIZE;
+
+	if (test_and_set_bit(BITS_PER_LONG - 1, (unsigned long *)&regs))
+		return NULL;
+
+	if (on_stack(&state->stack_info, regs, sizeof(*regs)))
+		return regs;
+
+	if ((unsigned long *)regs >= task_begin &&
+	    (unsigned long *)regs < task_end &&
+	    (unsigned long *)(regs + 1) <= task_end)
+		return regs;
+
+	return NULL;
+}
+
 static unsigned long *update_stack_state(struct unwind_state *state, void *addr,
 					 size_t len)
 {
@@ -58,14 +83,32 @@ static bool unwind_next_frame_bp(struct unwind_state *state, unsigned long *bp)
 	return true;
 }
 
+static bool unwind_next_frame_regs(struct unwind_state *state,
+				   struct pt_regs *regs)
+{
+	update_stack_state(state, regs, sizeof(*regs));
+	if (state->stack_info.type == STACK_TYPE_UNKNOWN)
+		return false;
+
+	state->regs = regs;
+
+	return unwind_next_frame_bp(state, (unsigned long *)regs->bp);
+}
+
 bool unwind_next_frame(struct unwind_state *state)
 {
+	struct pt_regs *regs;
 	unsigned long *bp;
+
+	state->regs = NULL;
 
 	if (unwind_done(state))
 		return false;
 
 	bp = (unsigned long *)*state->bp;
+	regs = decode_frame_pointer(state, bp);
+	if (regs)
+		return unwind_next_frame_regs(state, regs);
 
 	return unwind_next_frame_bp(state, bp);
 }
@@ -79,6 +122,7 @@ void __unwind_start(struct unwind_state *state, struct task_struct *task,
 	state->task = task;
 	state->sp = sp;
 	state->bp = get_frame_pointer(task, regs);
+	state->regs = NULL;
 
 	get_stack_info(sp, state->task, &state->stack_info, &state->stack_mask);
 

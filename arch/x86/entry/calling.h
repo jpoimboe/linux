@@ -201,6 +201,27 @@ For 32-bit we have the following conventions - kernel is built with
 	.byte 0xf1
 	.endm
 
+	/*
+	 * This is a sneaky trick to help the unwinder find pt_regs on the
+	 * stack.  The frame pointer is replaced with an encoded pointer to
+	 * pt_regs.  The encoding is just a clearing of the highest-order bit,
+	 * which makes it an invalid address and is also a signal to the
+	 * unwinder that it's a pt_regs pointer in disguise.
+	 *
+	 * NOTE: This must be called *after* SAVE_EXTRA_REGS because it
+	 * corrupts rbp.
+	 */
+.macro ENCODE_FRAME_POINTER ptregs_offset=0
+#ifdef CONFIG_FRAME_POINTER
+	.if \ptregs_offset
+		leaq \ptregs_offset(%rsp), %rbp
+	.else
+		mov %rsp, %rbp
+	.endif
+	btr $63, %rbp
+#endif
+.endm
+
 #endif /* CONFIG_X86_64 */
 
 /*

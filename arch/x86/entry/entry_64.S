@@ -431,6 +431,7 @@ END(irq_entries_start)
 	ALLOC_PT_GPREGS_ON_STACK
 	SAVE_C_REGS
 	SAVE_EXTRA_REGS
+	ENCODE_FRAME_POINTER
 
 	testb	$3, CS(%rsp)
 	jz	1f
@@ -893,6 +894,7 @@ ENTRY(xen_failsafe_callback)
 	ALLOC_PT_GPREGS_ON_STACK
 	SAVE_C_REGS
 	SAVE_EXTRA_REGS
+	ENCODE_FRAME_POINTER
 	jmp	error_exit
 END(xen_failsafe_callback)
 
@@ -936,6 +938,7 @@ ENTRY(paranoid_entry)
 	cld
 	SAVE_C_REGS 8
 	SAVE_EXTRA_REGS 8
+	ENCODE_FRAME_POINTER 8
 	movl	$1, %ebx
 	movl	$MSR_GS_BASE, %ecx
 	rdmsr
@@ -983,6 +986,7 @@ ENTRY(error_entry)
 	cld
 	SAVE_C_REGS 8
 	SAVE_EXTRA_REGS 8
+	ENCODE_FRAME_POINTER 8
 	xorl	%ebx, %ebx
 	testb	$3, CS+8(%rsp)
 	jz	.Lerror_kernelspace
@@ -1165,6 +1169,7 @@ ENTRY(nmi)
 	pushq	%r13		/* pt_regs->r13 */
 	pushq	%r14		/* pt_regs->r14 */
 	pushq	%r15		/* pt_regs->r15 */
+	ENCODE_FRAME_POINTER
 
 	/*
 	 * At this point we no longer need to worry about stack damage
@@ -1182,7 +1187,7 @@ ENTRY(nmi)
 	 * do_nmi doesn't modify pt_regs.
 	 */
 	SWAPGS
-	jmp	restore_c_regs_and_iret
+	jmp	restore_regs_and_iret
 
 .Lnmi_from_kernel:
 	/*
