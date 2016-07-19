@@ -2248,7 +2248,7 @@ void arch_perf_update_userpage(struct perf_event *event,
  * callchain support
  */
 
-static int backtrace_stack(void *data, char *name)
+static int backtrace_stack(void *data, const char *name)
 {
 	return 0;
 }

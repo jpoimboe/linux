@@ -28,8 +28,27 @@ static unsigned long exception_stack_sizes[N_EXCEPTION_STACKS] = {
 	[DEBUG_STACK - 1]			= DEBUG_STKSZ
 };
 
-static unsigned long *in_exception_stack(unsigned long *s, char **name,
-					 unsigned long *visit_mask)
+void stack_type_str(enum stack_type type, const char **begin, const char **end)
+{
+	BUILD_BUG_ON(N_EXCEPTION_STACKS != 4);
+
+	switch (type) {
+	case STACK_TYPE_IRQ:
+		*begin = "IRQ";
+		*end   = "EOI";
+		break;
+	case STACK_TYPE_EXCEPTION ... STACK_TYPE_EXCEPTION_LAST:
+		*begin = exception_stack_names[type - STACK_TYPE_EXCEPTION];
+		*end   = "EOE";
+		break;
+	default:
+		*begin = NULL;
+		*end   = NULL;
+	}
+}
+
+static bool in_exception_stack(unsigned long *s, struct stack_info *info,
+			       unsigned long *visit_mask)
 {
 	unsigned long stack = (unsigned long)s;
 	unsigned long begin, end;
@@ -44,55 +63,62 @@ static unsigned long *in_exception_stack(unsigned long *s, char **name,
 		if (stack < begin || stack >= end)
 			continue;
 
-		if (test_and_set_bit(k, visit_mask))
+		if (visit_mask &&
+		    test_and_set_bit(STACK_TYPE_EXCEPTION + k, visit_mask))
 			return false;
 
-		*name = exception_stack_names[k];
-		return (unsigned long *)end;
+		info->type	= STACK_TYPE_EXCEPTION + k;
+		info->begin	= (unsigned long *)begin;
+		info->end	= (unsigned long *)end;
+		info->next	= (unsigned long *)info->end[-2];
+
+		return true;
 	}
 
-	return NULL;
+	return false;
 }
 
-static inline int
-in_irq_stack(unsigned long *stack, unsigned long *irq_stack,
-	     unsigned long *irq_stack_end)
+static bool in_irq_stack(unsigned long *stack, struct stack_info *info,
+			 unsigned long *visit_mask)
 {
-	return (stack >= irq_stack && stack < irq_stack_end);
+	unsigned long *end   = (unsigned long *)this_cpu_read(irq_stack_ptr);
+	unsigned long *begin = end - (IRQ_USABLE_STACK_SIZE / sizeof(long));
+
+	if (stack < begin || stack >= end)
+		return false;
+
+	if (visit_mask && test_and_set_bit(STACK_TYPE_IRQ, visit_mask))
+		return false;
+
+	info->type	= STACK_TYPE_IRQ;
+	info->begin	= begin;
+	info->end	= end;
+	info->next	= (unsigned long *)end[-1];
+
+	return true;
 }
 
-enum stack_type {
-	STACK_IS_UNKNOWN,
-	STACK_IS_NORMAL,
-	STACK_IS_EXCEPTION,
-	STACK_IS_IRQ,
-};
-
-static enum stack_type
-analyze_stack(struct task_struct *task, unsigned long *stack,
-	      unsigned long **stack_end, unsigned long *irq_stack,
-	      unsigned long *visit_mask, char **name)
+int get_stack_info(unsigned long *stack, struct task_struct *task,
+		   struct stack_info *info, unsigned long *visit_mask)
 {
-	unsigned long addr;
+	if (!task)
+		task = current;
 
-	addr = ((unsigned long)stack & (~(THREAD_SIZE - 1)));
-	if ((unsigned long)task_stack_page(task) == addr)
-		return STACK_IS_NORMAL;
+	if (in_task_stack(stack, task, info, visit_mask))
+		return 0;
 
-	*stack_end = in_exception_stack(stack, name, visit_mask);
-	if (*stack_end)
-		return STACK_IS_EXCEPTION;
+	if (task != current)
+		goto unknown;
 
-	if (!irq_stack)
-		return STACK_IS_NORMAL;
+	if (in_exception_stack(stack, info, visit_mask))
+		return 0;
 
-	*stack_end = irq_stack;
-	irq_stack -= (IRQ_USABLE_STACK_SIZE / sizeof(long));
+	if (in_irq_stack(stack, info, visit_mask))
+		return 0;
 
-	if (in_irq_stack(stack, irq_stack, *stack_end))
-		return STACK_IS_IRQ;
-
-	return STACK_IS_UNKNOWN;
+unknown:
+	info->type = STACK_TYPE_UNKNOWN;
+	return -EINVAL;
 }
 
 /*
@@ -106,8 +132,8 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *stack, unsigned long bp,
 		const struct stacktrace_ops *ops, void *data)
 {
-	unsigned long *irq_stack = (unsigned long *)this_cpu_read(irq_stack_ptr);
 	unsigned long visit_mask = 0;
+	struct stack_info info;
 	int graph = 0;
 	int done = 0;
 
@@ -121,57 +147,37 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	 * exceptions
 	 */
 	while (!done) {
-		unsigned long *stack_end;
-		enum stack_type stype;
-		char *name;
+		const char *begin_str, *end_str;
 
-		stype = analyze_stack(task, stack, &stack_end, irq_stack,
-				      &visit_mask, &name);
+		get_stack_info(stack, task, &info, &visit_mask);
 
 		/* Default finish unless specified to continue */
 		done = 1;
 
-		switch (stype) {
+		switch (info.type) {
 
 		/* Break out early if we are on the thread stack */
-		case STACK_IS_NORMAL:
+		case STACK_TYPE_TASK:
 			break;
 
-		case STACK_IS_EXCEPTION:
+		case STACK_TYPE_IRQ:
+		case STACK_TYPE_EXCEPTION ... STACK_TYPE_EXCEPTION_LAST:
 
-			if (ops->stack(data, name) < 0)
+			stack_type_str(info.type, &begin_str, &end_str);
+
+			if (ops->stack(data, begin_str) < 0)
 				break;
 
 			bp = ops->walk_stack(task, stack, bp, ops,
-					     data, stack_end, &graph);
-			ops->stack(data, "EOE");
-			/*
-			 * We link to the next stack via the
-			 * second-to-last pointer (index -2 to end) in the
-			 * exception stack:
-			 */
-			stack = (unsigned long *) stack_end[-2];
+					     data, &info, &graph);
+
+			ops->stack(data, end_str);
+
+			stack = info.next;
 			done = 0;
 			break;
 
-		case STACK_IS_IRQ:
-
-			if (ops->stack(data, "IRQ") < 0)
-				break;
-			bp = ops->walk_stack(task, stack, bp,
-				     ops, data, stack_end, &graph);
-			/*
-			 * We link to the next stack (which would be
-			 * the process stack normally) the last
-			 * pointer (index -1 to end) in the IRQ stack:
-			 */
-			stack = (unsigned long *) (stack_end[-1]);
-			irq_stack = NULL;
-			ops->stack(data, "EOI");
-			done = 0;
-			break;
-
-		case STACK_IS_UNKNOWN:
+		default:
 			ops->stack(data, "UNK");
 			break;
 		}
@@ -180,7 +186,7 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	/*
 	 * This handles the process stack:
 	 */
-	bp = ops->walk_stack(task, stack, bp, ops, data, NULL, &graph);
+	bp = ops->walk_stack(task, stack, bp, ops, data, &info, &graph);
 }
 EXPORT_SYMBOL(dump_trace);
 
@@ -188,13 +194,12 @@ void
 show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		   unsigned long *sp, unsigned long bp, char *log_lvl)
 {
-	unsigned long *irq_stack_end;
-	unsigned long *irq_stack;
+	unsigned long *irq_stack, *irq_stack_end;
 	unsigned long *stack;
 	int i;
 
-	irq_stack_end	= (unsigned long *)this_cpu_read(irq_stack_ptr);
-	irq_stack	= irq_stack_end - IRQ_USABLE_STACK_SIZE;
+	irq_stack_end = (unsigned long *)this_cpu_read(irq_stack_ptr);
+	irq_stack     = irq_stack_end - IRQ_USABLE_STACK_SIZE;
 
 	sp = sp ? : get_stack_pointer(task, regs);
 
