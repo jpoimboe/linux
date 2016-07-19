@@ -103,9 +103,6 @@ in_irq_stack(unsigned long *stack, unsigned long *irq_stack,
 	return (stack >= irq_stack && stack < irq_stack_end);
 }
 
-static const unsigned long irq_stack_size =
-	(IRQ_STACK_SIZE - 64) / sizeof(unsigned long);
-
 enum stack_type {
 	STACK_IS_UNKNOWN,
 	STACK_IS_NORMAL,
@@ -133,7 +130,7 @@ analyze_stack(int cpu, struct task_struct *task, unsigned long *stack,
 		return STACK_IS_NORMAL;
 
 	*stack_end = irq_stack;
-	irq_stack = irq_stack - irq_stack_size;
+	irq_stack -= (IRQ_USABLE_STACK_SIZE / sizeof(long));
 
 	if (in_irq_stack(stack, irq_stack, *stack_end))
 		return STACK_IS_IRQ;
