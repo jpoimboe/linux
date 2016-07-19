@@ -286,9 +286,7 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 void show_regs(struct pt_regs *regs)
 {
 	int i;
-	unsigned long sp;
 
-	sp = regs->sp;
 	show_regs_print_info(KERN_DEFAULT);
 	__show_regs(regs, 1);
 
@@ -303,8 +301,7 @@ void show_regs(struct pt_regs *regs)
 		u8 *ip;
 
 		printk(KERN_DEFAULT "Stack:\n");
-		show_stack_log_lvl(NULL, regs, (unsigned long *)sp,
-				   0, KERN_DEFAULT);
+		show_stack_log_lvl(NULL, regs, NULL, 0, KERN_DEFAULT);
 
 		printk(KERN_DEFAULT "Code: ");
 
