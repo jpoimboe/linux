@@ -173,6 +173,14 @@ void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 			 * printed as unreliable.
 			 */
 			unwind_next_frame(&state);
+
+			/*
+			 * If the previous frame had pt_regs associated with it
+			 * due to an interrupt or exception, print them.
+			 */
+			regs = unwind_get_entry_regs(&state);
+			if (regs)
+				__show_regs(regs, 0);
 		}
 
 		if (str_end)
