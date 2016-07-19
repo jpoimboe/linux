@@ -123,6 +123,13 @@ void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 			if (!__kernel_text_address(addr))
 				continue;
 
+			/*
+			 * Don't print regs->ip again if it was already printed
+			 * by __show_regs() below.
+			 */
+			if (stack == &regs->ip)
+				continue;
+
 			if (stack == ret_addr_p)
 				reliable = 1;
 
@@ -151,6 +158,14 @@ void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 			 * printed as unreliable.
 			 */
 			unwind_next_frame(&state);
+
+			/*
+			 * If the previous frame had pt_regs associated with it
+			 * due to an interrupt or syscall, print them.
+			 */
+			regs = unwind_get_entry_regs(&state);
+			if (regs)
+				__show_regs(regs, 0);
 		}
 
 		if (str_end)
