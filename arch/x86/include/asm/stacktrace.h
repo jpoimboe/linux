@@ -117,9 +117,8 @@ get_stack_pointer(struct task_struct *task, struct pt_regs *regs)
 	return (unsigned long *)task->thread.sp;
 }
 
-extern void
-show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
-		   unsigned long *stack, unsigned long bp, char *log_lvl);
+void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
+			unsigned long *stack, char *log_lvl);
 
 extern unsigned int code_bytes;
 

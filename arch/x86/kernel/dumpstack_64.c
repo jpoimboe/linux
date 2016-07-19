@@ -226,7 +226,7 @@ void show_regs(struct pt_regs *regs)
 		unsigned char c;
 		u8 *ip;
 
-		show_trace_log_lvl(NULL, regs, NULL, 0, KERN_DEFAULT);
+		show_trace_log_lvl(NULL, regs, NULL, KERN_DEFAULT);
 
 		printk(KERN_DEFAULT "Code: ");
 
