@@ -101,7 +101,7 @@ void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 
 		stack_type_str(stack_info.type, &str_begin, &str_end);
 		if (str_begin)
-			printk("%s <%s> ", log_lvl, str_begin);
+			printk("%s <%s>\n", log_lvl, str_begin);
 
 		/*
 		 * Scan the stack, printing any text addresses we find.  At the
@@ -154,7 +154,7 @@ void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		}
 
 		if (str_end)
-			printk("%s <%s> ", log_lvl, str_end);
+			printk("%s <%s>\n", log_lvl, str_end);
 	}
 }
 
@@ -171,12 +171,12 @@ void show_stack(struct task_struct *task, unsigned long *sp)
 		bp = (unsigned long)get_frame_pointer(current, NULL);
 	}
 
-	show_stack_log_lvl(task, NULL, sp, "");
+	show_stack_log_lvl(task, NULL, sp, KERN_DEFAULT);
 }
 
 void show_stack_regs(struct pt_regs *regs)
 {
-	show_stack_log_lvl(NULL, regs, NULL, "");
+	show_stack_log_lvl(NULL, regs, NULL, KERN_DEFAULT);
 }
 
 static arch_spinlock_t die_lock = __ARCH_SPIN_LOCK_UNLOCKED;
