@@ -17,7 +17,7 @@
 #include <linux/sysfs.h>
 
 #include <asm/stacktrace.h>
-
+#include <asm/unwind.h>
 
 int panic_on_unrecovered_nmi;
 int panic_on_io_nmi;
@@ -79,107 +79,105 @@ ftrace_graph_ret_addr(struct task_struct *task, int *idx, unsigned long addr)
 }
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */
 
-/*
- * x86-64 can have up to three kernel stacks:
- * process stack
- * interrupt stack
- * severe exception (double fault, nmi, stack fault, debug, mce) hardware stack
- */
-
-unsigned long
-print_context_stack(struct task_struct *task,
-		unsigned long *stack, unsigned long bp,
-		const struct stacktrace_ops *ops, void *data,
-		struct stack_info *info, int *graph)
+void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
+			unsigned long *stack, char *log_lvl)
 {
-	struct stack_frame *frame = (struct stack_frame *)bp;
+	struct unwind_state state;
+	struct stack_info stack_info = {0};
+	unsigned long stack_mask = 0;
+	int graph_idx = 0;
+
+	printk("%sCall Trace:\n", log_lvl);
+
+	stack = stack ? : get_stack_pointer(task, regs);
+	if (!task)
+		task = current;
+
+	unwind_start(&state, task, regs, stack);
 
 	/*
-	 * If we overflowed the stack into a guard page, jump back to the
-	 * bottom of the usable stack.
+	 * Iterate through the stacks, starting with the current stack pointer.
+	 * Each stack has a pointer to the next one.
+	 *
+	 * x86-64 can have several stacks:
+	 * - task stack
+	 * - interrupt stack
+	 * - HW exception stacks (double fault, nmi, debug, mce)
+	 *
+	 * x86-32 can have up to three stacks:
+	 * - task stack
+	 * - softirq stack
+	 * - hardirq stack
 	 */
-	if ((unsigned long)task_stack_page(task) - (unsigned long)stack <
-	    PAGE_SIZE)
-		stack = (unsigned long *)task_stack_page(task);
+	for (; stack; stack = stack_info.next) {
+		const char *str_begin, *str_end;
 
-	while (on_stack(info, stack, sizeof(*stack))) {
-		unsigned long addr = *stack;
+		/*
+		 * If we overflowed the task stack into a guard page, jump back
+		 * to the bottom of the usable stack.
+		 */
+		if (task_stack_page(task) - (void *)stack < PAGE_SIZE)
+			stack = task_stack_page(task);
 
-		addr = *stack;
-		if (__kernel_text_address(addr)) {
-			int reliable = 0;
+		if (get_stack_info(stack, task, &stack_info, &stack_mask))
+			break;
+
+		stack_type_str(stack_info.type, &str_begin, &str_end);
+		if (str_begin)
+			printk("%s <%s> ", log_lvl, str_begin);
+
+		/*
+		 * Scan the stack, printing any text addresses we find.  At the
+		 * same time, follow proper stack frames with the unwinder.
+		 *
+		 * Addresses found during the scan which are not reported by
+		 * the unwinder are considered to be additional clues which are
+		 * sometimes useful for debugging and are prefixed with '?'.
+		 * This also serves as a failsafe option in case the unwinder
+		 * goes off the rails.
+		 */
+		for (; stack < stack_info.end; stack++) {
+			unsigned long addr = *stack;
 			unsigned long real_addr;
+			unsigned long *ret_addr_p = \
+				unwind_get_return_address_ptr(&state);
 
-			if ((unsigned long) stack == bp + sizeof(long)) {
-				reliable = 1;
-				frame = frame->next_frame;
-				bp = (unsigned long) frame;
+			if (!__kernel_text_address(addr))
+				continue;
+
+			if (stack != ret_addr_p) {
+				/* found an "unreliable" address */
+				printk_stack_address(addr, 0, log_lvl);
+				continue;
 			}
 
-			real_addr = ftrace_graph_ret_addr(task, graph, addr);
-			if (addr != real_addr)
-				ops->address(data, addr, 0);
-			ops->address(data, real_addr, reliable);
+			/*
+			 * When function graph tracing is enabled, the original
+			 * return address on the stack of a traced function is
+			 * replaced with the address of an ftrace handler.
+			 * In that case we print the ftrace handler address as
+			 * an unreliable clue and then print the real function
+			 * as a reliable address.
+			 */
+			real_addr = ftrace_graph_ret_addr(task, &graph_idx,
+							  addr);
+			if (real_addr != addr)
+				printk_stack_address(addr, 0, log_lvl);
+
+			printk_stack_address(real_addr, 1, log_lvl);
+
+			/*
+			 * Get the next frame from the unwinder.  No need to
+			 * check for an error: if anything goes wrong with the
+			 * unwinder, the rest of the addresses will just be
+			 * printed as unreliable.
+			 */
+			unwind_next_frame(&state);
 		}
-		stack++;
+
+		if (str_end)
+			printk("%s <%s> ", log_lvl, str_end);
 	}
-	return bp;
-}
-EXPORT_SYMBOL_GPL(print_context_stack);
-
-unsigned long
-print_context_stack_bp(struct task_struct *task,
-		       unsigned long *stack, unsigned long bp,
-		       const struct stacktrace_ops *ops, void *data,
-		       struct stack_info *info, int *graph)
-{
-	struct stack_frame *frame = (struct stack_frame *)bp;
-	unsigned long *ret_addr = &frame->return_address;
-
-	while (on_stack(info, stack, sizeof(*stack) * 2)) {
-		unsigned long addr = *ret_addr;
-
-		if (!__kernel_text_address(addr))
-			break;
-
-		addr = ftrace_graph_ret_addr(task, graph, addr);
-		if (ops->address(data, addr, 1))
-			break;
-		frame = frame->next_frame;
-		ret_addr = &frame->return_address;
-	}
-
-	return (unsigned long)frame;
-}
-EXPORT_SYMBOL_GPL(print_context_stack_bp);
-
-static int print_trace_stack(void *data, const char *name)
-{
-	printk("%s <%s> ", (char *)data, name);
-	return 0;
-}
-
-/*
- * Print one address/symbol entries per line.
- */
-static int print_trace_address(void *data, unsigned long addr, int reliable)
-{
-	printk_stack_address(addr, reliable, data);
-	return 0;
-}
-
-static const struct stacktrace_ops print_trace_ops = {
-	.stack			= print_trace_stack,
-	.address		= print_trace_address,
-	.walk_stack		= print_context_stack,
-};
-
-void
-show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
-		unsigned long *stack, unsigned long bp, char *log_lvl)
-{
-	printk("%sCall Trace:\n", log_lvl);
-	dump_trace(task, regs, stack, bp, &print_trace_ops, log_lvl);
 }
 
 void show_stack(struct task_struct *task, unsigned long *sp)
@@ -195,12 +193,12 @@ void show_stack(struct task_struct *task, unsigned long *sp)
 		bp = (unsigned long)get_frame_pointer(current, NULL);
 	}
 
-	show_stack_log_lvl(task, NULL, sp, bp, "");
+	show_stack_log_lvl(task, NULL, sp, "");
 }
 
 void show_stack_regs(struct pt_regs *regs)
 {
-	show_stack_log_lvl(current, regs, NULL, 0, "");
+	show_stack_log_lvl(NULL, regs, NULL, "");
 }
 
 static arch_spinlock_t die_lock = __ARCH_SPIN_LOCK_UNLOCKED;
