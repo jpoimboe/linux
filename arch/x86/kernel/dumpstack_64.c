@@ -16,83 +16,41 @@
 
 #include <asm/stacktrace.h>
 
-
-#define N_EXCEPTION_STACKS_END \
-		(N_EXCEPTION_STACKS + DEBUG_STKSZ/EXCEPTION_STKSZ - 2)
-
-static char x86_stack_ids[][8] = {
-		[ DEBUG_STACK-1			]	= "#DB",
-		[ NMI_STACK-1			]	= "NMI",
-		[ DOUBLEFAULT_STACK-1		]	= "#DF",
-		[ MCE_STACK-1			]	= "#MC",
-#if DEBUG_STKSZ > EXCEPTION_STKSZ
-		[ N_EXCEPTION_STACKS ...
-		  N_EXCEPTION_STACKS_END	]	= "#DB[?]"
-#endif
+static char *exception_stack_names[N_EXCEPTION_STACKS] = {
+		[ DOUBLEFAULT_STACK-1	]	= "#DF",
+		[ NMI_STACK-1		]	= "NMI",
+		[ DEBUG_STACK-1		]	= "#DB",
+		[ MCE_STACK-1		]	= "#MC",
 };
 
-static unsigned long *in_exception_stack(unsigned long stack, unsigned *usedp,
-					 char **idp)
+static unsigned long exception_stack_sizes[N_EXCEPTION_STACKS] = {
+	[0 ... N_EXCEPTION_STACKS - 1]		= EXCEPTION_STKSZ,
+	[DEBUG_STACK - 1]			= DEBUG_STKSZ
+};
+
+static unsigned long *in_exception_stack(unsigned long *s, char **name,
+					 unsigned long *visit_mask)
 {
+	unsigned long stack = (unsigned long)s;
+	unsigned long begin, end;
 	unsigned k;
 
-	/*
-	 * Iterate over all exception stacks, and figure out whether
-	 * 'stack' is in one of them:
-	 */
-	for (k = 0; k < N_EXCEPTION_STACKS; k++) {
-		unsigned long end = this_cpu_ptr(&orig_ist)->ist[k];
-		/*
-		 * Is 'stack' above this exception frame's end?
-		 * If yes then skip to the next frame.
-		 */
-		if (stack >= end)
-			continue;
-		/*
-		 * Is 'stack' above this exception frame's start address?
-		 * If yes then we found the right frame.
-		 */
-		if (stack >= end - EXCEPTION_STKSZ) {
-			/*
-			 * Make sure we only iterate through an exception
-			 * stack once. If it comes up for the second time
-			 * then there's something wrong going on - just
-			 * break out and return NULL:
-			 */
-			if (*usedp & (1U << k))
-				break;
-			*usedp |= 1U << k;
-			*idp = x86_stack_ids[k];
-			return (unsigned long *)end;
-		}
-		/*
-		 * If this is a debug stack, and if it has a larger size than
-		 * the usual exception stacks, then 'stack' might still
-		 * be within the lower portion of the debug stack:
-		 */
-#if DEBUG_STKSZ > EXCEPTION_STKSZ
-		if (k == DEBUG_STACK - 1 && stack >= end - DEBUG_STKSZ) {
-			unsigned j = N_EXCEPTION_STACKS - 1;
+	BUILD_BUG_ON(N_EXCEPTION_STACKS != 4);
 
-			/*
-			 * Black magic. A large debug stack is composed of
-			 * multiple exception stack entries, which we
-			 * iterate through now. Dont look:
-			 */
-			do {
-				++j;
-				end -= EXCEPTION_STKSZ;
-				x86_stack_ids[j][4] = '1' +
-						(j - N_EXCEPTION_STACKS);
-			} while (stack < end - EXCEPTION_STKSZ);
-			if (*usedp & (1U << j))
-				break;
-			*usedp |= 1U << j;
-			*idp = x86_stack_ids[j];
-			return (unsigned long *)end;
-		}
-#endif
+	for (k = 0; k < N_EXCEPTION_STACKS; k++) {
+		end   = this_cpu_ptr(&orig_ist)->ist[k];
+		begin = end - exception_stack_sizes[k];
+
+		if (stack < begin || stack >= end)
+			continue;
+
+		if (test_and_set_bit(k, visit_mask))
+			return false;
+
+		*name = exception_stack_names[k];
+		return (unsigned long *)end;
 	}
+
 	return NULL;
 }
 
@@ -113,7 +71,7 @@ enum stack_type {
 static enum stack_type
 analyze_stack(struct task_struct *task, unsigned long *stack,
 	      unsigned long **stack_end, unsigned long *irq_stack,
-	      unsigned *used, char **id)
+	      unsigned long *visit_mask, char **name)
 {
 	unsigned long addr;
 
@@ -121,7 +79,7 @@ analyze_stack(struct task_struct *task, unsigned long *stack,
 	if ((unsigned long)task_stack_page(task) == addr)
 		return STACK_IS_NORMAL;
 
-	*stack_end = in_exception_stack((unsigned long)stack, used, id);
+	*stack_end = in_exception_stack(stack, name, visit_mask);
 	if (*stack_end)
 		return STACK_IS_EXCEPTION;
 
@@ -149,7 +107,7 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		const struct stacktrace_ops *ops, void *data)
 {
 	unsigned long *irq_stack = (unsigned long *)this_cpu_read(irq_stack_ptr);
-	unsigned used = 0;
+	unsigned long visit_mask = 0;
 	int graph = 0;
 	int done = 0;
 
@@ -165,10 +123,10 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 	while (!done) {
 		unsigned long *stack_end;
 		enum stack_type stype;
-		char *id;
+		char *name;
 
-		stype = analyze_stack(task, stack, &stack_end, irq_stack, &used,
-				      &id);
+		stype = analyze_stack(task, stack, &stack_end, irq_stack,
+				      &visit_mask, &name);
 
 		/* Default finish unless specified to continue */
 		done = 1;
@@ -181,7 +139,7 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 
 		case STACK_IS_EXCEPTION:
 
-			if (ops->stack(data, id) < 0)
+			if (ops->stack(data, name) < 0)
 				break;
 
 			bp = ops->walk_stack(task, stack, bp, ops,
