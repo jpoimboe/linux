@@ -253,8 +253,8 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 	preempt_disable();
 	cpu = smp_processor_id();
 
-	irq_stack_end	= (unsigned long *)(per_cpu(irq_stack_ptr, cpu));
-	irq_stack	= (unsigned long *)(per_cpu(irq_stack_ptr, cpu) - IRQ_STACK_SIZE);
+	irq_stack_end = (unsigned long *)(per_cpu(irq_stack_ptr, cpu));
+	irq_stack     = irq_stack_end - (IRQ_USABLE_STACK_SIZE / sizeof(long));
 
 	/*
 	 * Debugging aid: "show_stack(NULL, NULL);" prints the
