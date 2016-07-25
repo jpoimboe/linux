@@ -78,7 +78,7 @@ static bool in_exception_stack(unsigned long *stack, struct stack_info *info)
 static bool in_irq_stack(unsigned long *stack, struct stack_info *info)
 {
 	unsigned long *end   = (unsigned long *)this_cpu_read(irq_stack_ptr);
-	unsigned long *begin = end - (IRQ_USABLE_STACK_SIZE / sizeof(long));
+	unsigned long *begin = end - (IRQ_STACK_SIZE / sizeof(long));
 
 	if (stack < begin || stack >= end)
 		return false;
@@ -145,7 +145,7 @@ void show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 	int i;
 
 	irq_stack_end = (unsigned long *)this_cpu_read(irq_stack_ptr);
-	irq_stack     = irq_stack_end - (IRQ_USABLE_STACK_SIZE / sizeof(long));
+	irq_stack     = irq_stack_end - (IRQ_STACK_SIZE / sizeof(long));
 
 	sp = sp ? : get_stack_pointer(task, regs);
 
