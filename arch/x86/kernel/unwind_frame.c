@@ -135,8 +135,13 @@ bool unwind_next_frame(struct unwind_state *state)
 		 * encoded regs pointer is on the IRQ stack but the regs
 		 * themselves are on the task stack.
 		 */
-		if (!update_stack_state(state, regs, sizeof(*regs)))
+		if (!update_stack_state(state, regs, sizeof(*regs))) {
+			printk_deferred_once(KERN_WARNING "WARNING: kernel stack frame pointer at %p in %s:%d decodes to bad regs pointer %p\n",
+				state->bp, state->task->comm, state->task->pid,
+				regs);
+
 			return false;
+		}
 
 		/*
 		 * The regs are now safe to access and are made available to
@@ -157,8 +162,23 @@ bool unwind_next_frame(struct unwind_state *state)
 	 * Make sure the next frame is on a valid stack and can be accessed
 	 * safely.
 	 */
-	if (!update_stack_state(state, next_bp, FRAME_HEADER_SIZE))
+	if (!update_stack_state(state, next_bp, FRAME_HEADER_SIZE)) {
+		/*
+		 * The next frame isn't on a valid stack, and we haven't
+		 * reached the end, which means something went wrong: either a
+		 * bad next stack pointer or a bad frame pointer.
+		 */
+		if (state->regs)
+			printk_deferred_once(KERN_WARNING "WARNING: kernel stack regs->bp at %p in %s:%d points to bad address %p\n",
+				state->bp, state->task->comm,
+				state->task->pid, regs);
+		else
+			printk_deferred_once(KERN_WARNING "WARNING: kernel stack frame pointer at %p in %s:%d points to bad address %p\n",
+				state->bp, state->task->comm,
+				state->task->pid, next_bp);
+
 		return false;
+	}
 
 	/* move to the next frame */
 	state->bp = next_bp;
