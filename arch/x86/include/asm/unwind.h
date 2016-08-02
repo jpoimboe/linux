@@ -13,6 +13,7 @@ struct unwind_state {
 	int graph_idx;
 #ifdef CONFIG_FRAME_POINTER
 	unsigned long *bp;
+	struct pt_regs *regs;
 #else
 	unsigned long *sp;
 #endif
@@ -43,6 +44,11 @@ static inline unsigned long *unwind_get_stack_ptr(struct unwind_state *state)
 	return state->bp;
 }
 
+static inline struct pt_regs *unwind_get_entry_regs(struct unwind_state *state)
+{
+	return state->regs;
+}
+
 unsigned long unwind_get_return_address(struct unwind_state *state);
 
 #else /* !CONFIG_FRAME_POINTER */
@@ -59,6 +65,11 @@ static inline unsigned long *unwind_get_stack_ptr(struct unwind_state *state)
 		return NULL;
 
 	return state->sp;
+}
+
+static inline struct pt_regs *unwind_get_entry_regs(struct unwind_state *state)
+{
+	return NULL;
 }
 
 static inline
