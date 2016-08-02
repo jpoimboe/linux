@@ -107,6 +107,7 @@ bool unwind_next_frame(struct unwind_state *state)
 {
 	struct pt_regs *regs;
 	unsigned long *next_bp;
+	enum stack_type prev_type = state->stack_info.type;
 
 	state->regs = NULL;
 
@@ -183,6 +184,15 @@ bool unwind_next_frame(struct unwind_state *state)
 				state->bp, state->task->comm,
 				state->task->pid, next_bp);
 
+		return false;
+	}
+
+	/* make sure the stack only unwinds up */
+	if (state->stack_info.type == prev_type && next_bp <= state->bp) {
+		printk_deferred_once(KERN_WARNING "WARNING: kernel stack frame pointer at %p in %s:%d points the wrong way (%p)\n",
+				     state->bp, state->task->comm,
+				     state->task->pid, next_bp);
+		state->stack_info.type = STACK_TYPE_UNKNOWN;
 		return false;
 	}
 
