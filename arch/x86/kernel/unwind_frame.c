@@ -21,6 +21,14 @@ unsigned long unwind_get_return_address(struct unwind_state *state)
 }
 EXPORT_SYMBOL_GPL(unwind_get_return_address);
 
+static bool is_last_task_frame(struct unwind_state *state)
+{
+	unsigned long bp = (unsigned long)state->bp;
+	unsigned long regs = (unsigned long)task_pt_regs(state->task);
+
+	return bp == regs - FRAME_HEADER_SIZE;
+}
+
 #ifdef CONFIG_X86_64
 /*
  * This determines if the frame pointer actually contains an encoded pointer to
@@ -98,6 +106,20 @@ bool unwind_next_frame(struct unwind_state *state)
 
 	if (unwind_done(state))
 		return false;
+
+	/*
+	 * The entry code doesn't encode pt_regs on syscalls, so check for them
+	 * here.  The last frame pointer and associated syscall pt_regs (for
+	 * user tasks) are always at a standard location at the end of the task
+	 * stack.  If we've reached the end, go ahead and exit early to avoid
+	 * trying to decode an invalid frame pointer.
+	 */
+	if (is_last_task_frame(state)) {
+		if (!(state->task->flags & PF_KTHREAD))
+			state->regs = task_pt_regs(state->task);
+		state->stack_info.type = STACK_TYPE_UNKNOWN;
+		return false;
+	}
 
 	next_bp = (unsigned long *)*state->bp;
 
