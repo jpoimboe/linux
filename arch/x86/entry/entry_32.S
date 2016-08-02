@@ -174,6 +174,23 @@
 	SET_KERNEL_GS %edx
 .endm
 
+/*
+ * This is a sneaky trick to help the unwinder find pt_regs on the
+ * stack.  The frame pointer is replaced with an encoded pointer to
+ * pt_regs.  The encoding is just a clearing of the highest-order bit,
+ * which makes it an invalid address and is also a signal to the
+ * unwinder that it's a pt_regs pointer in disguise.
+ *
+ * NOTE: This macro must be used *after* SAVE_ALL because it corrupts the
+ * original rbp.
+ */
+.macro ENCODE_FRAME_POINTER
+#ifdef CONFIG_FRAME_POINTER
+	mov %esp, %ebp
+	btr $31, %ebp
+#endif
+.endm
+
 .macro RESTORE_INT_REGS
 	popl	%ebx
 	popl	%ecx
@@ -205,9 +222,15 @@
 .endm
 
 ENTRY(ret_from_fork)
+	call	1f
+1:	push	$0
+	mov	%esp, %ebp
+
 	pushl	%eax
 	call	schedule_tail
 	popl	%eax
+
+	addl	$8, %esp
 
 	/* When we fork, we trace the syscall return in the child, too. */
 	movl    %esp, %eax
@@ -587,6 +610,7 @@ common_interrupt:
 	ASM_CLAC
 	addl	$-0x80, (%esp)			/* Adjust vector into the [-256, -1] range */
 	SAVE_ALL
+	ENCODE_FRAME_POINTER
 	TRACE_IRQS_OFF
 	movl	%esp, %eax
 	call	do_IRQ
@@ -598,6 +622,7 @@ ENTRY(name)				\
 	ASM_CLAC;			\
 	pushl	$~(nr);			\
 	SAVE_ALL;			\
+	ENCODE_FRAME_POINTER;		\
 	TRACE_IRQS_OFF			\
 	movl	%esp, %eax;		\
 	call	fn;			\
@@ -732,6 +757,7 @@ END(spurious_interrupt_bug)
 ENTRY(xen_hypervisor_callback)
 	pushl	$-1				/* orig_ax = -1 => not a system call */
 	SAVE_ALL
+	ENCODE_FRAME_POINTER
 	TRACE_IRQS_OFF
 
 	/*
@@ -786,6 +812,7 @@ ENTRY(xen_failsafe_callback)
 	jmp	iret_exc
 5:	pushl	$-1				/* orig_ax = -1 => not a system call */
 	SAVE_ALL
+	ENCODE_FRAME_POINTER
 	jmp	ret_from_exception
 
 .section .fixup, "ax"
@@ -1009,6 +1036,7 @@ error_code:
 	pushl	%edx
 	pushl	%ecx
 	pushl	%ebx
+	ENCODE_FRAME_POINTER
 	cld
 	movl	$(__KERNEL_PERCPU), %ecx
 	movl	%ecx, %fs
@@ -1041,6 +1069,7 @@ ENTRY(debug)
 	ASM_CLAC
 	pushl	$-1				# mark this as an int
 	SAVE_ALL
+	ENCODE_FRAME_POINTER
 	xorl	%edx, %edx			# error code 0
 	movl	%esp, %eax			# pt_regs pointer
 
@@ -1056,11 +1085,11 @@ ENTRY(debug)
 
 .Ldebug_from_sysenter_stack:
 	/* We're on the SYSENTER stack.  Switch off. */
-	movl	%esp, %ebp
+	movl	%esp, %ebx
 	movl	PER_CPU_VAR(cpu_current_top_of_stack), %esp
 	TRACE_IRQS_OFF
 	call	do_debug
-	movl	%ebp, %esp
+	movl	%ebx, %esp
 	jmp	ret_from_exception
 END(debug)
 
@@ -1083,6 +1112,7 @@ ENTRY(nmi)
 
 	pushl	%eax				# pt_regs->orig_ax
 	SAVE_ALL
+	ENCODE_FRAME_POINTER
 	xorl	%edx, %edx			# zero error code
 	movl	%esp, %eax			# pt_regs pointer
 
@@ -1101,10 +1131,10 @@ ENTRY(nmi)
 	 * We're on the SYSENTER stack.  Switch off.  No one (not even debug)
 	 * is using the thread stack right now, so it's safe for us to use it.
 	 */
-	movl	%esp, %ebp
+	movl	%esp, %ebx
 	movl	PER_CPU_VAR(cpu_current_top_of_stack), %esp
 	call	do_nmi
-	movl	%ebp, %esp
+	movl	%ebx, %esp
 	jmp	restore_all_notrace
 
 #ifdef CONFIG_X86_ESPFIX32
@@ -1121,6 +1151,7 @@ nmi_espfix_stack:
 	.endr
 	pushl	%eax
 	SAVE_ALL
+	ENCODE_FRAME_POINTER
 	FIXUP_ESPFIX_STACK			# %eax == %esp
 	xorl	%edx, %edx			# zero error code
 	call	do_nmi
@@ -1134,6 +1165,7 @@ ENTRY(int3)
 	ASM_CLAC
 	pushl	$-1				# mark this as an int
 	SAVE_ALL
+	ENCODE_FRAME_POINTER
 	TRACE_IRQS_OFF
 	xorl	%edx, %edx			# zero error code
 	movl	%esp, %eax			# pt_regs pointer
