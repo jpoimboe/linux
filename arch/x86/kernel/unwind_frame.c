@@ -40,6 +40,15 @@ unsigned long unwind_get_return_address(struct unwind_state *state)
 }
 EXPORT_SYMBOL_GPL(unwind_get_return_address);
 
+static size_t regs_size(struct pt_regs *regs)
+{
+	/* x86_32 regs from kernel mode are two words shorter */
+	if (IS_ENABLED(CONFIG_X86_32) && !user_mode(regs))
+		return sizeof(*regs) - (2*sizeof(long));
+
+	return sizeof(*regs);
+}
+
 static bool is_last_task_frame(struct unwind_state *state)
 {
 	unsigned long bp = (unsigned long)state->bp;
@@ -93,6 +102,7 @@ bool unwind_next_frame(struct unwind_state *state)
 	struct pt_regs *regs;
 	unsigned long *next_bp, *next_sp;
 	size_t next_len;
+	enum stack_type prev_type = state->stack_info.type;
 
 	if (unwind_done(state))
 		return false;
@@ -134,6 +144,18 @@ bool unwind_next_frame(struct unwind_state *state)
 	if (!update_stack_state(state, next_sp, next_len))
 		goto bad_address;
 
+	/* make sure it only unwinds up and doesn't overlap the last frame */
+	if (state->stack_info.type == prev_type) {
+		if (state->regs &&
+		    (void *)next_sp < (void *)state->regs +
+				      regs_size(state->regs))
+			goto bad_address;
+
+		if (state->bp &&
+		    (void *)next_sp < (void *)state->bp + FRAME_HEADER_SIZE)
+			goto bad_address;
+	}
+
 	/* move to the next frame */
 	if (regs) {
 		state->regs = regs;
@@ -150,12 +172,12 @@ bad_address:
 		printk_deferred_once(KERN_WARNING
 			"WARNING: kernel stack regs at %p in %s:%d has bad 'bp' value %p\n",
 			state->regs, state->task->comm,
-			state->task->pid, next_bp);
+			state->task->pid, next_sp);
 	else
 		printk_deferred_once(KERN_WARNING
 			"WARNING: kernel stack frame pointer at %p in %s:%d has bad value %p\n",
 			state->bp, state->task->comm,
-			state->task->pid, next_bp);
+			state->task->pid, next_sp);
 the_end:
 	state->stack_info.type = STACK_TYPE_UNKNOWN;
 	return false;
