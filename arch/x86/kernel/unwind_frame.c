@@ -17,12 +17,28 @@ unsigned long unwind_get_return_address(struct unwind_state *state)
 	if (state->regs && user_mode(state->regs))
 		return 0;
 
+	/*
+	 * This catches an awkward code path where do_execve() is called by a
+	 * kernel thread from ret_from_fork.  There's a window where PF_KTHREAD
+	 * has been cleared but regs->cs still indicates kernel mode.
+	 */
+	if (state->regs == task_pt_regs(state->task))
+		return 0;
+
 	addr = ftrace_graph_ret_addr(state->task, &state->graph_idx, *addr_p,
 				     addr_p);
 
 	return __kernel_text_address(addr) ? addr : 0;
 }
 EXPORT_SYMBOL_GPL(unwind_get_return_address);
+
+static bool is_last_task_frame(struct unwind_state *state)
+{
+	unsigned long bp = (unsigned long)state->bp;
+	unsigned long regs = (unsigned long)task_pt_regs(state->task);
+
+	return bp == regs - FRAME_HEADER_SIZE;
+}
 
 /*
  * This determines if the frame pointer actually contains an encoded pointer to
@@ -76,6 +92,19 @@ bool unwind_next_frame(struct unwind_state *state)
 	/* have we reached the end? */
 	if (state->regs && user_mode(state->regs))
 		goto the_end;
+
+	if (is_last_task_frame(state)) {
+		if ((state->task->flags & PF_KTHREAD))
+			goto the_end;
+
+		/*
+		 * Entry code doesn't encode the pt_regs pointer on syscalls,
+		 * so manually set the regs here.
+		 */
+		state->regs = task_pt_regs(state->task);
+		state->bp = NULL;
+		return true;
+	}
 
 	/* get the next frame pointer */
 	if (state->regs)
