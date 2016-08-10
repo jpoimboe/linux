@@ -255,13 +255,13 @@ page_pde_offset = (__PAGE_OFFSET >> 20);
 		we're booting under. */
 	movl pa(boot_params + BP_hardware_subarch), %eax
 	cmpl $num_subarch_entries, %eax
-	jae bad_subarch
+	jae .Lbad_subarch
 
 	movl pa(subarch_entries)(,%eax,4), %eax
 	subl $__PAGE_OFFSET, %eax
 	jmp *%eax
 
-bad_subarch:
+.Lbad_subarch:
 WEAK(lguest_entry)
 WEAK(xen_entry)
 	/* Unknown implementation; there's really

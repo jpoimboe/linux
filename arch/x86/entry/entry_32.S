@@ -64,7 +64,7 @@
 # define preempt_stop(clobbers)	DISABLE_INTERRUPTS(clobbers); TRACE_IRQS_OFF
 #else
 # define preempt_stop(clobbers)
-# define resume_kernel		restore_all
+# define resume_kernel		.Lrestore_all
 #endif
 
 .macro TRACE_IRQS_IRET
@@ -235,7 +235,7 @@ ENTRY(ret_from_fork)
 	/* When we fork, we trace the syscall return in the child, too. */
 	movl    %esp, %eax
 	call    syscall_return_slowpath
-	jmp     restore_all
+	jmp     .Lrestore_all
 END(ret_from_fork)
 
 ENTRY(ret_from_kernel_thread)
@@ -253,7 +253,7 @@ ENTRY(ret_from_kernel_thread)
 	 */
 	movl    %esp, %eax
 	call    syscall_return_slowpath
-	jmp     restore_all
+	jmp     .Lrestore_all
 ENDPROC(ret_from_kernel_thread)
 
 /*
@@ -287,19 +287,19 @@ ENTRY(resume_userspace)
 	TRACE_IRQS_OFF
 	movl	%esp, %eax
 	call	prepare_exit_to_usermode
-	jmp	restore_all
+	jmp	.Lrestore_all
 END(ret_from_exception)
 
 #ifdef CONFIG_PREEMPT
 ENTRY(resume_kernel)
 	DISABLE_INTERRUPTS(CLBR_ANY)
-need_resched:
+.Lneed_resched:
 	cmpl	$0, PER_CPU_VAR(__preempt_count)
-	jnz	restore_all
+	jnz	.Lrestore_all
 	testl	$X86_EFLAGS_IF, PT_EFLAGS(%esp)	# interrupts off (exception path) ?
-	jz	restore_all
+	jz	.Lrestore_all
 	call	preempt_schedule_irq
-	jmp	need_resched
+	jmp	.Lneed_resched
 END(resume_kernel)
 #endif
 
@@ -320,7 +320,7 @@ GLOBAL(__begin_SYSENTER_singlestep_region)
  */
 ENTRY(xen_sysenter_target)
 	addl	$5*4, %esp			/* remove xen-provided frame */
-	jmp	sysenter_past_esp
+	jmp	.Lsysenter_past_esp
 #endif
 
 /*
@@ -357,7 +357,7 @@ ENTRY(xen_sysenter_target)
  */
 ENTRY(entry_SYSENTER_32)
 	movl	TSS_sysenter_sp0(%esp), %esp
-sysenter_past_esp:
+.Lsysenter_past_esp:
 	pushl	$__USER_DS		/* pt_regs->ss */
 	pushl	%ebp			/* pt_regs->sp (stashed in bp) */
 	pushfl				/* pt_regs->flags (except IF = 0) */
@@ -488,11 +488,11 @@ ENTRY(entry_INT80_32)
 	call	do_int80_syscall_32
 .Lsyscall_32_done:
 
-restore_all:
+.Lrestore_all:
 	TRACE_IRQS_IRET
-restore_all_notrace:
+.Lrestore_all_notrace:
 #ifdef CONFIG_X86_ESPFIX32
-	ALTERNATIVE	"jmp restore_nocheck", "", X86_BUG_ESPFIX
+	ALTERNATIVE	"jmp .Lrestore_nocheck", "", X86_BUG_ESPFIX
 
 	movl	PT_EFLAGS(%esp), %eax		# mix EFLAGS, SS and CS
 	/*
@@ -504,22 +504,23 @@ restore_all_notrace:
 	movb	PT_CS(%esp), %al
 	andl	$(X86_EFLAGS_VM | (SEGMENT_TI_MASK << 8) | SEGMENT_RPL_MASK), %eax
 	cmpl	$((SEGMENT_LDT << 8) | USER_RPL), %eax
-	je ldt_ss				# returning to user-space with LDT SS
+	je .Lldt_ss				# returning to user-space with LDT SS
 #endif
-restore_nocheck:
+.Lrestore_nocheck:
 	RESTORE_REGS 4				# skip orig_eax/error_code
-irq_return:
+.Lirq_return:
 	INTERRUPT_RETURN
+
 .section .fixup, "ax"
 ENTRY(iret_exc	)
 	pushl	$0				# no error code
 	pushl	$do_iret_error
-	jmp	error_code
+	jmp	common_exception
 .previous
-	_ASM_EXTABLE(irq_return, iret_exc)
+	_ASM_EXTABLE(.Lirq_return, iret_exc)
 
 #ifdef CONFIG_X86_ESPFIX32
-ldt_ss:
+.Lldt_ss:
 /*
  * Setup and switch to ESPFIX stack
  *
@@ -548,7 +549,7 @@ ldt_ss:
 	 */
 	DISABLE_INTERRUPTS(CLBR_EAX)
 	lss	(%esp), %esp			/* switch to espfix segment */
-	jmp	restore_nocheck
+	jmp	.Lrestore_nocheck
 #endif
 ENDPROC(entry_INT80_32)
 
@@ -647,7 +648,7 @@ ENTRY(coprocessor_error)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_coprocessor_error
-	jmp	error_code
+	jmp	common_exception
 END(coprocessor_error)
 
 ENTRY(simd_coprocessor_error)
@@ -661,14 +662,14 @@ ENTRY(simd_coprocessor_error)
 #else
 	pushl	$do_simd_coprocessor_error
 #endif
-	jmp	error_code
+	jmp	common_exception
 END(simd_coprocessor_error)
 
 ENTRY(device_not_available)
 	ASM_CLAC
 	pushl	$-1				# mark this as an int
 	pushl	$do_device_not_available
-	jmp	error_code
+	jmp	common_exception
 END(device_not_available)
 
 #ifdef CONFIG_PARAVIRT
@@ -682,59 +683,59 @@ ENTRY(overflow)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_overflow
-	jmp	error_code
+	jmp	common_exception
 END(overflow)
 
 ENTRY(bounds)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_bounds
-	jmp	error_code
+	jmp	common_exception
 END(bounds)
 
 ENTRY(invalid_op)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_invalid_op
-	jmp	error_code
+	jmp	common_exception
 END(invalid_op)
 
 ENTRY(coprocessor_segment_overrun)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_coprocessor_segment_overrun
-	jmp	error_code
+	jmp	common_exception
 END(coprocessor_segment_overrun)
 
 ENTRY(invalid_TSS)
 	ASM_CLAC
 	pushl	$do_invalid_TSS
-	jmp	error_code
+	jmp	common_exception
 END(invalid_TSS)
 
 ENTRY(segment_not_present)
 	ASM_CLAC
 	pushl	$do_segment_not_present
-	jmp	error_code
+	jmp	common_exception
 END(segment_not_present)
 
 ENTRY(stack_segment)
 	ASM_CLAC
 	pushl	$do_stack_segment
-	jmp	error_code
+	jmp	common_exception
 END(stack_segment)
 
 ENTRY(alignment_check)
 	ASM_CLAC
 	pushl	$do_alignment_check
-	jmp	error_code
+	jmp	common_exception
 END(alignment_check)
 
 ENTRY(divide_error)
 	ASM_CLAC
 	pushl	$0				# no error code
 	pushl	$do_divide_error
-	jmp	error_code
+	jmp	common_exception
 END(divide_error)
 
 #ifdef CONFIG_X86_MCE
@@ -742,7 +743,7 @@ ENTRY(machine_check)
 	ASM_CLAC
 	pushl	$0
 	pushl	machine_check_vector
-	jmp	error_code
+	jmp	common_exception
 END(machine_check)
 #endif
 
@@ -750,7 +751,7 @@ ENTRY(spurious_interrupt_bug)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_spurious_interrupt_bug
-	jmp	error_code
+	jmp	common_exception
 END(spurious_interrupt_bug)
 
 #ifdef CONFIG_XEN
@@ -872,7 +873,7 @@ ftrace_call:
 	popl	%edx
 	popl	%ecx
 	popl	%eax
-ftrace_ret:
+.Lftrace_ret:
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 .globl ftrace_graph_call
 ftrace_graph_call:
@@ -942,7 +943,7 @@ GLOBAL(ftrace_regs_call)
 	popl	%gs
 	addl	$8, %esp			/* Skip orig_ax and ip */
 	popf					/* Pop flags at end (no addl to corrupt flags) */
-	jmp	ftrace_ret
+	jmp	.Lftrace_ret
 
 	popf
 	jmp	ftrace_stub
@@ -953,7 +954,7 @@ ENTRY(mcount)
 	jb	ftrace_stub			/* Paging not enabled yet? */
 
 	cmpl	$ftrace_stub, ftrace_trace_function
-	jnz	trace
+	jnz	.Ltrace
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 	cmpl	$ftrace_stub, ftrace_graph_return
 	jnz	ftrace_graph_caller
@@ -966,7 +967,7 @@ ftrace_stub:
 	ret
 
 	/* taken from glibc */
-trace:
+.Ltrace:
 	pushl	%eax
 	pushl	%ecx
 	pushl	%edx
@@ -1016,7 +1017,7 @@ return_to_handler:
 ENTRY(trace_page_fault)
 	ASM_CLAC
 	pushl	$trace_do_page_fault
-	jmp	error_code
+	jmp	common_exception
 END(trace_page_fault)
 #endif
 
@@ -1024,7 +1025,10 @@ ENTRY(page_fault)
 	ASM_CLAC
 	pushl	$do_page_fault
 	ALIGN
-error_code:
+	jmp common_exception
+END(page_fault)
+
+common_exception:
 	/* the function address is in %gs's slot on the stack */
 	pushl	%fs
 	pushl	%es
@@ -1054,7 +1058,7 @@ error_code:
 	movl	%esp, %eax			# pt_regs pointer
 	call	*%edi
 	jmp	ret_from_exception
-END(page_fault)
+END(common_exception)
 
 ENTRY(debug)
 	/*
@@ -1107,7 +1111,7 @@ ENTRY(nmi)
 	movl	%ss, %eax
 	cmpw	$__ESPFIX_SS, %ax
 	popl	%eax
-	je	nmi_espfix_stack
+	je	.Lnmi_espfix_stack
 #endif
 
 	pushl	%eax				# pt_regs->orig_ax
@@ -1124,7 +1128,7 @@ ENTRY(nmi)
 
 	/* Not on SYSENTER stack. */
 	call	do_nmi
-	jmp	restore_all_notrace
+	jmp	.Lrestore_all_notrace
 
 .Lnmi_from_sysenter_stack:
 	/*
@@ -1135,10 +1139,10 @@ ENTRY(nmi)
 	movl	PER_CPU_VAR(cpu_current_top_of_stack), %esp
 	call	do_nmi
 	movl	%ebx, %esp
-	jmp	restore_all_notrace
+	jmp	.Lrestore_all_notrace
 
 #ifdef CONFIG_X86_ESPFIX32
-nmi_espfix_stack:
+.Lnmi_espfix_stack:
 	/*
 	 * create the pointer to lss back
 	 */
@@ -1157,7 +1161,7 @@ nmi_espfix_stack:
 	call	do_nmi
 	RESTORE_REGS
 	lss	12+4(%esp), %esp		# back to espfix stack
-	jmp	irq_return
+	jmp	.Lirq_return
 #endif
 END(nmi)
 
@@ -1175,14 +1179,14 @@ END(int3)
 
 ENTRY(general_protection)
 	pushl	$do_general_protection
-	jmp	error_code
+	jmp	common_exception
 END(general_protection)
 
 #ifdef CONFIG_KVM_GUEST
 ENTRY(async_page_fault)
 	ASM_CLAC
 	pushl	$do_async_page_fault
-	jmp	error_code
+	jmp	common_exception
 END(async_page_fault)
 #endif
 
