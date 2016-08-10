@@ -290,7 +290,7 @@ num_subarch_entries = (. - subarch_entries) / 4
 ENTRY(start_cpu0)
 	movl initial_stack, %ecx
 	movl %ecx, %esp
-	jmp  *(initial_code)
+	call *(initial_code)
 ENDPROC(start_cpu0)
 #endif
 
@@ -471,8 +471,7 @@ is486:
 	xorl %eax,%eax			# Clear LDT
 	lldt %ax
 
-	pushl $0		# fake return address for unwinder
-	jmp *(initial_code)
+	call *(initial_code)
 
 #include "verify_cpu.S"
 
