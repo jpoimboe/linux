@@ -17,14 +17,6 @@ unsigned long unwind_get_return_address(struct unwind_state *state)
 	if (state->regs && user_mode(state->regs))
 		return 0;
 
-	/*
-	 * This catches an awkward code path where do_execve() is called by a
-	 * kernel thread from ret_from_fork.  There's a window where PF_KTHREAD
-	 * has been cleared but regs->cs still indicates kernel mode.
-	 */
-	if (state->regs == task_pt_regs(state->task))
-		return 0;
-
 	addr = ftrace_graph_ret_addr(state->task, &state->graph_idx, *addr_p,
 				     addr_p);
 
@@ -110,16 +102,30 @@ bool unwind_next_frame(struct unwind_state *state)
 	/* have we reached the end? */
 	if (state->regs && user_mode(state->regs))
 		goto the_end;
+
 	if (is_last_task_frame(state)) {
-		if ((state->task->flags & PF_KTHREAD))
+		regs = task_pt_regs(state->task);
+
+		/*
+		 * kthreads (other than the boot CPU's idle thread) have some
+		 * partial regs at the end of their stack which were placed
+		 * there by copy_thread_tls().  But the regs don't have any
+		 * useful information, so we can skip them.
+		 *
+		 * This user_mode() check is slightly broader than a PF_KTHREAD
+		 * check because it also catches the awkward situation where a
+		 * newly forked kthread transitions to a user task by calling
+		 * do_execve(), which eventually clears PF_KTHREAD.
+		 */
+		if (!user_mode(regs))
 			goto the_end;
 
 		/*
 		 * We're almost at the end, but not quite: we still have the
-		 * regs frame.  Entry code doesn't encode the regs pointer for
-		 * syscalls, so have to do it manually.
+		 * syscall regs frame.  Entry code doesn't encode the regs
+		 * pointer for syscalls, so we have to set it manually.
 		 */
-		state->regs = task_pt_regs(state->task);
+		state->regs = regs;
 		state->bp = NULL;
 		return true;
 	}
