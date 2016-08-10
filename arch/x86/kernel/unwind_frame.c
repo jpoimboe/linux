@@ -110,14 +110,14 @@ bool unwind_next_frame(struct unwind_state *state)
 	/* have we reached the end? */
 	if (state->regs && user_mode(state->regs))
 		goto the_end;
-
 	if (is_last_task_frame(state)) {
 		if ((state->task->flags & PF_KTHREAD))
 			goto the_end;
 
 		/*
-		 * Entry code doesn't encode the pt_regs pointer on syscalls,
-		 * so manually set the regs here.
+		 * We're almost at the end, but not quite: we still have the
+		 * regs frame.  Entry code doesn't encode the regs pointer for
+		 * syscalls, so have to do it manually.
 		 */
 		state->regs = task_pt_regs(state->task);
 		state->bp = NULL;
