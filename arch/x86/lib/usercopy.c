@@ -50,12 +50,21 @@ int arch_within_stack_frames(const void * const stack,
 			     const void * const stackend,
 			     const void *obj, unsigned long len)
 {
-	const void *frame = NULL;
-	const void *oldframe;
+	struct unwind_state state;
+	const void *frame, *oldframe;
 
-	oldframe = __builtin_frame_address(2);
-	if (oldframe)
-		frame = __builtin_frame_address(3);
+	unwind_start(&state, current, NULL, NULL);
+
+	if (!unwind_next_frame(&state))
+		return 0;
+
+	oldframe = unwind_get_stack_ptr(&state);
+
+	if (!unwind_next_frame(&state))
+		return 0;
+
+	frame = unwind_get_stack_ptr(&state);
+
 	/*
 	 * low ----------------------------------------------> high
 	 * [saved bp][saved ip][args][local vars][saved bp][saved ip]
@@ -71,8 +80,12 @@ int arch_within_stack_frames(const void * const stack,
 		 */
 		if (obj + len <= frame)
 			return obj >= oldframe + 2 * sizeof(void *) ? 1 : -1;
+
+		if (!unwind_next_frame(&state))
+			return 0;
+
 		oldframe = frame;
-		frame = *(const void * const *)frame;
+		frame = unwind_get_stack_ptr(&state);
 	}
 	return -1;
 }
