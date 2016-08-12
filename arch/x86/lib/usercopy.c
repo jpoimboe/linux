@@ -50,30 +50,40 @@ int arch_within_stack_frames(const void * const stack,
 			     const void * const stackend,
 			     const void *obj, unsigned long len)
 {
-	const void *frame = NULL;
-	const void *oldframe;
+	struct unwind_state state;
+	const void *frame, *frame_end;
 
-	oldframe = __builtin_frame_address(2);
-	if (oldframe)
-		frame = __builtin_frame_address(3);
+	/*
+	 * Start at the end of our grandparent's frame (beginning of
+	 * great-grandparent's frame).
+	 */
+	unwind_start(&state, current, NULL, NULL);
+	if (WARN_ON_ONCE(!unwind_next_frame(&state) ||
+			 !unwind_next_frame(&state)))
+		return 0;
+	frame = unwind_get_stack_ptr(&state);
+
 	/*
 	 * low ----------------------------------------------> high
 	 * [saved bp][saved ip][args][local vars][saved bp][saved ip]
 	 *                     ^----------------^
 	 *               allow copies only within here
 	 */
-	while (stack <= frame && frame < stackend) {
-		/*
-		 * If obj + len extends past the last frame, this
-		 * check won't pass and the next frame will be 0,
-		 * causing us to bail out and correctly report
-		 * the copy as invalid.
-		 */
-		if (obj + len <= frame)
-			return obj >= oldframe + 2 * sizeof(void *) ? 1 : -1;
-		oldframe = frame;
-		frame = *(const void * const *)frame;
+	frame += 2*sizeof(long);
+
+	while (unwind_next_frame(&state)) {
+		frame_end = unwind_get_stack_ptr(&state);
+
+		if (obj >= frame && obj + len <= frame_end)
+			return 1;
+
+		frame = frame_end + 2*sizeof(long);
 	}
+
+	/* make sure the unwinder reached the end of the task stack */
+	if (WARN_ON_ONCE(frame != (void *)task_pt_regs(current)))
+		return 0;
+
 	return -1;
 }
 #endif /* CONFIG_HARDENED_USERCOPY && CONFIG_FRAME_POINTER */
