@@ -528,7 +528,7 @@ ENTRY(entry_INT80_32)
 ENTRY(iret_exc	)
 	pushl	$0				# no error code
 	pushl	$do_iret_error
-	jmp	error_code
+	jmp	common_exception
 .previous
 	_ASM_EXTABLE(.Lirq_return, iret_exc)
 
@@ -659,7 +659,7 @@ ENTRY(coprocessor_error)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_coprocessor_error
-	jmp	error_code
+	jmp	common_exception
 END(coprocessor_error)
 
 ENTRY(simd_coprocessor_error)
@@ -673,14 +673,14 @@ ENTRY(simd_coprocessor_error)
 #else
 	pushl	$do_simd_coprocessor_error
 #endif
-	jmp	error_code
+	jmp	common_exception
 END(simd_coprocessor_error)
 
 ENTRY(device_not_available)
 	ASM_CLAC
 	pushl	$-1				# mark this as an int
 	pushl	$do_device_not_available
-	jmp	error_code
+	jmp	common_exception
 END(device_not_available)
 
 #ifdef CONFIG_PARAVIRT
@@ -694,59 +694,59 @@ ENTRY(overflow)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_overflow
-	jmp	error_code
+	jmp	common_exception
 END(overflow)
 
 ENTRY(bounds)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_bounds
-	jmp	error_code
+	jmp	common_exception
 END(bounds)
 
 ENTRY(invalid_op)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_invalid_op
-	jmp	error_code
+	jmp	common_exception
 END(invalid_op)
 
 ENTRY(coprocessor_segment_overrun)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_coprocessor_segment_overrun
-	jmp	error_code
+	jmp	common_exception
 END(coprocessor_segment_overrun)
 
 ENTRY(invalid_TSS)
 	ASM_CLAC
 	pushl	$do_invalid_TSS
-	jmp	error_code
+	jmp	common_exception
 END(invalid_TSS)
 
 ENTRY(segment_not_present)
 	ASM_CLAC
 	pushl	$do_segment_not_present
-	jmp	error_code
+	jmp	common_exception
 END(segment_not_present)
 
 ENTRY(stack_segment)
 	ASM_CLAC
 	pushl	$do_stack_segment
-	jmp	error_code
+	jmp	common_exception
 END(stack_segment)
 
 ENTRY(alignment_check)
 	ASM_CLAC
 	pushl	$do_alignment_check
-	jmp	error_code
+	jmp	common_exception
 END(alignment_check)
 
 ENTRY(divide_error)
 	ASM_CLAC
 	pushl	$0				# no error code
 	pushl	$do_divide_error
-	jmp	error_code
+	jmp	common_exception
 END(divide_error)
 
 #ifdef CONFIG_X86_MCE
@@ -754,7 +754,7 @@ ENTRY(machine_check)
 	ASM_CLAC
 	pushl	$0
 	pushl	machine_check_vector
-	jmp	error_code
+	jmp	common_exception
 END(machine_check)
 #endif
 
@@ -762,7 +762,7 @@ ENTRY(spurious_interrupt_bug)
 	ASM_CLAC
 	pushl	$0
 	pushl	$do_spurious_interrupt_bug
-	jmp	error_code
+	jmp	common_exception
 END(spurious_interrupt_bug)
 
 #ifdef CONFIG_XEN
@@ -1026,7 +1026,7 @@ return_to_handler:
 ENTRY(trace_page_fault)
 	ASM_CLAC
 	pushl	$trace_do_page_fault
-	jmp	error_code
+	jmp	common_exception
 END(trace_page_fault)
 #endif
 
@@ -1034,7 +1034,10 @@ ENTRY(page_fault)
 	ASM_CLAC
 	pushl	$do_page_fault
 	ALIGN
-error_code:
+	jmp common_exception
+END(page_fault)
+
+common_exception:
 	/* the function address is in %gs's slot on the stack */
 	pushl	%fs
 	pushl	%es
@@ -1063,7 +1066,7 @@ error_code:
 	movl	%esp, %eax			# pt_regs pointer
 	call	*%edi
 	jmp	ret_from_exception
-END(page_fault)
+END(common_exception)
 
 ENTRY(debug)
 	/*
@@ -1180,14 +1183,14 @@ END(int3)
 
 ENTRY(general_protection)
 	pushl	$do_general_protection
-	jmp	error_code
+	jmp	common_exception
 END(general_protection)
 
 #ifdef CONFIG_KVM_GUEST
 ENTRY(async_page_fault)
 	ASM_CLAC
 	pushl	$do_async_page_fault
-	jmp	error_code
+	jmp	common_exception
 END(async_page_fault)
 #endif
 
