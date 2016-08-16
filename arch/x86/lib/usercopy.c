@@ -46,9 +46,7 @@ EXPORT_SYMBOL_GPL(copy_from_user_nmi);
  *		-1 if placed across a frame boundary (or outside stack)
  *		 0 unable to determine (no frame pointers, etc)
  */
-int arch_within_stack_frames(const void * const stack,
-			     const void * const stackend,
-			     void *first_frame,
+int arch_within_stack_frames(void *first_frame,
 			     const void *obj, unsigned long len)
 {
 	struct unwind_state state;
