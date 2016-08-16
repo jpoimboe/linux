@@ -26,8 +26,8 @@ enum {
 };
 
 /*
- * Checks if a given pointer and length is contained by the current
- * stack frame (if possible).
+ * Checks if a given pointer and length is contained by a frame in
+ * the current stack (if possible).
  *
  * Returns:
  *	NOT_STACK: not at all on the stack
@@ -35,7 +35,8 @@ enum {
  *	GOOD_STACK: fully on the stack (when can't do frame-checking)
  *	BAD_STACK: error condition (invalid stack position or bad stack frame)
  */
-static noinline int check_stack_object(const void *obj, unsigned long len)
+static __always_inline int check_stack_object(const void *obj,
+					      unsigned long len)
 {
 	const void * const stack = task_stack_page(current);
 	const void * const stackend = stack + THREAD_SIZE;
@@ -53,8 +54,12 @@ static noinline int check_stack_object(const void *obj, unsigned long len)
 	if (obj < stack || stackend < obj + len)
 		return BAD_STACK;
 
-	/* Check if object is safely within a valid frame. */
-	ret = arch_within_stack_frames(stack, stackend, obj, len);
+	/*
+	 * Starting with the caller's stack frame, check if the object
+	 * is safely within a valid frame.
+	 */
+	ret = arch_within_stack_frames(stack, stackend,
+				       __builtin_frame_address(0), obj, len);
 	if (ret)
 		return ret;
 

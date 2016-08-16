@@ -178,10 +178,12 @@ static inline unsigned long current_stack_pointer(void)
 #ifdef CONFIG_FRAME_POINTER
 int arch_within_stack_frames(const void * const stack,
 			     const void * const stackend,
+			     void *first_frame,
 			     const void *obj, unsigned long len);
 #else
 static inline int arch_within_stack_frames(const void * const stack,
 					   const void * const stackend,
+					   void *first_frame
 					   const void *obj, unsigned long len)
 {
 	return 0;
