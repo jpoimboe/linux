@@ -58,8 +58,7 @@ static __always_inline int check_stack_object(const void *obj,
 	 * Starting with the caller's stack frame, check if the object
 	 * is safely within a valid frame.
 	 */
-	ret = arch_within_stack_frames(stack, stackend,
-				       __builtin_frame_address(0), obj, len);
+	ret = arch_within_stack_frames(__builtin_frame_address(0), obj, len);
 	if (ret)
 		return ret;
 
