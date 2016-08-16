@@ -48,20 +48,16 @@ EXPORT_SYMBOL_GPL(copy_from_user_nmi);
  */
 int arch_within_stack_frames(const void * const stack,
 			     const void * const stackend,
+			     void *first_frame,
 			     const void *obj, unsigned long len)
 {
 	struct unwind_state state;
 	const void *frame, *frame_end;
 
-	/*
-	 * Start at the end of our grandparent's frame (beginning of
-	 * great-grandparent's frame).
-	 */
-	unwind_start(&state, current, NULL, NULL);
-	if (WARN_ON_ONCE(!unwind_next_frame(&state) ||
-			 !unwind_next_frame(&state)))
-		return 0;
+	unwind_start(&state, current, NULL, first_frame);
 	frame = unwind_get_stack_ptr(&state);
+	if (WARN_ON_ONCE(unwind_done(&state) || frame != first_frame))
+		return 0;
 
 	/*
 	 * low ----------------------------------------------> high
