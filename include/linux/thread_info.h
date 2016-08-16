@@ -108,6 +108,7 @@ static inline int test_ti_thread_flag(struct thread_info *ti, int flag)
 #ifndef CONFIG_HAVE_ARCH_WITHIN_STACK_FRAMES
 static inline int arch_within_stack_frames(const void * const stack,
 					   const void * const stackend,
+					   void *first_frame,
 					   const void *obj, unsigned long len)
 {
 	return 0;
