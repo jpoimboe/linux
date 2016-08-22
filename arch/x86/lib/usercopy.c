@@ -68,7 +68,9 @@ int arch_within_stack_frames(void *first_frame,
 	while (unwind_next_frame(&state)) {
 		frame_end = unwind_get_stack_ptr(&state);
 
-		if (obj >= frame && obj + len <= frame_end)
+		/* skip checking of pt_regs frames */
+		if (!unwind_get_entry_regs(&state) &&
+		    obj >= frame && obj + len <= frame_end)
 			return 1;
 
 		frame = frame_end + 2*sizeof(long);
