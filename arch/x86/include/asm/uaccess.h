@@ -710,20 +710,6 @@ copy_to_user_overflow(void) __asm__("copy_from_user_overflow");
 
 #undef copy_user_diag
 
-#ifdef CONFIG_DEBUG_STRICT_USER_COPY_CHECKS
-
-extern void
-__compiletime_warning("copy_from_user() buffer size is not provably correct")
-__copy_from_user_overflow(void) __asm__("copy_from_user_overflow");
-#define __copy_from_user_overflow(size, count) __copy_from_user_overflow()
-
-extern void
-__compiletime_warning("copy_to_user() buffer size is not provably correct")
-__copy_to_user_overflow(void) __asm__("copy_from_user_overflow");
-#define __copy_to_user_overflow(size, count) __copy_to_user_overflow()
-
-#else
-
 static inline void
 __copy_from_user_overflow(int size, unsigned long count)
 {
@@ -731,8 +717,6 @@ __copy_from_user_overflow(int size, unsigned long count)
 }
 
 #define __copy_to_user_overflow __copy_from_user_overflow
-
-#endif
 
 static inline unsigned long __must_check
 copy_from_user(void *to, const void __user *from, unsigned long n)
@@ -742,24 +726,6 @@ copy_from_user(void *to, const void __user *from, unsigned long n)
 	might_fault();
 
 	kasan_check_write(to, n);
-
-	/*
-	 * While we would like to have the compiler do the checking for us
-	 * even in the non-constant size case, any false positives there are
-	 * a problem (especially when DEBUG_STRICT_USER_COPY_CHECKS, but even
-	 * without - the [hopefully] dangerous looking nature of the warning
-	 * would make people go look at the respecitive call sites over and
-	 * over again just to find that there's no problem).
-	 *
-	 * And there are cases where it's just not realistic for the compiler
-	 * to prove the count to be in range. For example when multiple call
-	 * sites of a helper function - perhaps in different source files -
-	 * all doing proper range checking, yet the helper function not doing
-	 * so again.
-	 *
-	 * Therefore limit the compile time checking to the constant size
-	 * case, and do only runtime checking for non-constant sizes.
-	 */
 
 	if (likely(sz < 0 || sz >= n)) {
 		check_object_size(to, n, false);
@@ -781,7 +747,6 @@ copy_to_user(void __user *to, const void *from, unsigned long n)
 
 	might_fault();
 
-	/* See the comment in copy_from_user() above. */
 	if (likely(sz < 0 || sz >= n)) {
 		check_object_size(from, n, true);
 		n = _copy_to_user(to, from, n);

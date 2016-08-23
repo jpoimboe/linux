@@ -422,8 +422,7 @@ _copy_from_user(void *to, const void __user *from, unsigned long n)
  * option is not really compatible with -Werror, which is more useful in
  * general.
  */
-extern void copy_from_user_overflow(void)
-	__compiletime_warning("copy_from_user() size is not provably correct");
+extern void copy_from_user_overflow(void);
 
 static inline unsigned long __must_check copy_from_user(void *to,
 					  const void __user *from,
