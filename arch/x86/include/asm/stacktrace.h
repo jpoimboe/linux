@@ -10,8 +10,6 @@
 #include <linux/ptrace.h>
 #include <asm/switch_to.h>
 
-extern int kstack_depth_to_print;
-
 struct thread_info;
 struct stacktrace_ops;
 
@@ -89,10 +87,6 @@ get_stack_pointer(struct task_struct *task, struct pt_regs *regs)
 extern void
 show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		   unsigned long *stack, unsigned long bp, char *log_lvl);
-
-extern void
-show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
-		   unsigned long *sp, unsigned long bp, char *log_lvl);
 
 extern unsigned int code_bytes;
 
