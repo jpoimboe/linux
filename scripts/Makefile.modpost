@@ -119,10 +119,24 @@ targets += $(modules:.ko=.mod.o)
 quiet_cmd_ld_ko_o = LD [M]  $@
       cmd_ld_ko_o = $(LD) -r $(LDFLAGS)                                 \
                              $(KBUILD_LDFLAGS_MODULE) $(LDFLAGS_MODULE) \
-                             -o $@ $(filter-out FORCE,$^)
+                             -o $@ $(filter-out FORCE,$^) ;
+
+ifdef CONFIG_LIVEPATCH
+KLP_CONVERT = scripts/livepatch/klp-convert
+      cmd_klp_convert =							\
+	if [[ -n "`modinfo -F livepatch $@`" ]]; then			\
+		mv $@ $(@:.ko=.klp.o);					\
+		$(KLP_CONVERT) $(@:.ko=.klp.o) $@;			\
+	fi ;
+endif
+
+define rule_link_module
+	$(call echo-cmd,ld_ko_o) $(cmd_ld_ko_o)				\
+	$(cmd_klp_convert)
+endef
 
 $(modules): %.ko :%.o %.mod.o FORCE
-	$(call if_changed,ld_ko_o)
+	$(call if_changed_rule,link_module)
 
 targets += $(modules)
 
