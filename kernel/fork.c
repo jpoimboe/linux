@@ -386,6 +386,7 @@ void __put_task_struct(struct task_struct *tsk)
 	exit_creds(tsk);
 	delayacct_tsk_free(tsk);
 	put_signal_struct(tsk->signal);
+	kfree(tsk->kthread);
 
 	if (!profile_handoff_task(tsk))
 		free_task(tsk);
@@ -532,6 +533,7 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	tsk->splice_pipe = NULL;
 	tsk->task_frag.page = NULL;
 	tsk->wake_q.next = NULL;
+	tsk->kthread = NULL;
 
 	account_kernel_stack(tsk, 1);
 

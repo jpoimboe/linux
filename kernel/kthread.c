@@ -53,22 +53,6 @@ enum KTHREAD_BITS {
 	KTHREAD_IS_PARKED,
 };
 
-#define __to_kthread(vfork)	\
-	container_of(vfork, struct kthread, exited)
-
-static inline struct kthread *to_kthread(struct task_struct *k)
-{
-	return __to_kthread(k->vfork_done);
-}
-
-static struct kthread *to_live_kthread(struct task_struct *k)
-{
-	struct completion *vfork = ACCESS_ONCE(k->vfork_done);
-	if (likely(vfork) && try_get_task_stack(k))
-		return __to_kthread(vfork);
-	return NULL;
-}
-
 /**
  * kthread_should_stop - should this kthread return now?
  *
@@ -78,7 +62,7 @@ static struct kthread *to_live_kthread(struct task_struct *k)
  */
 bool kthread_should_stop(void)
 {
-	return test_bit(KTHREAD_SHOULD_STOP, &to_kthread(current)->flags);
+	return test_bit(KTHREAD_SHOULD_STOP, &current->kthread->flags);
 }
 EXPORT_SYMBOL(kthread_should_stop);
 
@@ -95,7 +79,7 @@ EXPORT_SYMBOL(kthread_should_stop);
  */
 bool kthread_should_park(void)
 {
-	return test_bit(KTHREAD_SHOULD_PARK, &to_kthread(current)->flags);
+	return test_bit(KTHREAD_SHOULD_PARK, &current->kthread->flags);
 }
 EXPORT_SYMBOL_GPL(kthread_should_park);
 
@@ -134,7 +118,7 @@ EXPORT_SYMBOL_GPL(kthread_freezable_should_stop);
  */
 void *kthread_data(struct task_struct *task)
 {
-	return to_kthread(task)->data;
+	return task->kthread->data;
 }
 
 /**
@@ -148,15 +132,17 @@ void *kthread_data(struct task_struct *task)
  */
 void *kthread_probe_data(struct task_struct *task)
 {
-	struct kthread *kthread = to_kthread(task);
+	struct kthread *kthread = task->kthread;
 	void *data = NULL;
 
 	probe_kernel_read(&data, &kthread->data, sizeof(data));
 	return data;
 }
 
-static void __kthread_parkme(struct kthread *self)
+void kthread_parkme(void)
 {
+	struct kthread *self = current->kthread;
+
 	__set_current_state(TASK_PARKED);
 	while (test_bit(KTHREAD_SHOULD_PARK, &self->flags)) {
 		if (!test_and_set_bit(KTHREAD_IS_PARKED, &self->flags))
@@ -167,35 +153,32 @@ static void __kthread_parkme(struct kthread *self)
 	clear_bit(KTHREAD_IS_PARKED, &self->flags);
 	__set_current_state(TASK_RUNNING);
 }
-
-void kthread_parkme(void)
-{
-	__kthread_parkme(to_kthread(current));
-}
 EXPORT_SYMBOL_GPL(kthread_parkme);
 
 static int kthread(void *_create)
 {
-	/* Copy data: it's on kthread's stack */
 	struct kthread_create_info *create = _create;
 	int (*threadfn)(void *data) = create->threadfn;
 	void *data = create->data;
 	struct completion *done;
-	struct kthread self;
-	int ret;
+	struct kthread *self;
+	int ret = 0;
 
-	self.flags = 0;
-	self.data = data;
-	init_completion(&self.exited);
-	init_completion(&self.parked);
-	current->vfork_done = &self.exited;
+	self = kmalloc(sizeof(*self), GFP_KERNEL);
+	if (!self)
+		return -ENOMEM;
 
-	/* If user was SIGKILLed, I release the structure. */
+	self->flags = 0;
+	self->data = data;
+	init_completion(&self->exited);
+	init_completion(&self->parked);
+	current->kthread = self;
+
+	/* check if user was SIGKILLed */
 	done = xchg(&create->done, NULL);
-	if (!done) {
-		kfree(create);
-		do_exit(-EINTR);
-	}
+	if (!done)
+		return -EINTR;
+
 	/* OK, tell user we're spawned, wait for stop or wakeup */
 	__set_current_state(TASK_UNINTERRUPTIBLE);
 	create->result = current;
@@ -204,11 +187,11 @@ static int kthread(void *_create)
 
 	ret = -EINTR;
 
-	if (!test_bit(KTHREAD_SHOULD_STOP, &self.flags)) {
-		__kthread_parkme(&self);
+	if (!test_bit(KTHREAD_SHOULD_STOP, &self->flags)) {
+		kthread_parkme();
 		ret = threadfn(data);
 	}
-	/* we can't just return, we must preserve "self" on stack */
+
 	do_exit(ret);
 }
 
@@ -404,8 +387,8 @@ struct task_struct *kthread_create_on_cpu(int (*threadfn)(void *data),
 		return p;
 	kthread_bind(p, cpu);
 	/* CPU hotplug need to bind once again when unparking the thread. */
-	set_bit(KTHREAD_IS_PER_CPU, &to_kthread(p)->flags);
-	to_kthread(p)->cpu = cpu;
+	set_bit(KTHREAD_IS_PER_CPU, &p->kthread->flags);
+	p->kthread->cpu = cpu;
 	return p;
 }
 
@@ -439,12 +422,10 @@ static void __kthread_unpark(struct task_struct *k, struct kthread *kthread)
  */
 void kthread_unpark(struct task_struct *k)
 {
-	struct kthread *kthread = to_live_kthread(k);
+	struct kthread *kthread = k->kthread;
 
-	if (kthread) {
+	if (kthread)
 		__kthread_unpark(k, kthread);
-		put_task_stack(k);
-	}
 }
 EXPORT_SYMBOL_GPL(kthread_unpark);
 
@@ -462,7 +443,7 @@ EXPORT_SYMBOL_GPL(kthread_unpark);
  */
 int kthread_park(struct task_struct *k)
 {
-	struct kthread *kthread = to_live_kthread(k);
+	struct kthread *kthread = k->kthread;
 	int ret = -ENOSYS;
 
 	if (kthread) {
@@ -473,7 +454,6 @@ int kthread_park(struct task_struct *k)
 				wait_for_completion(&kthread->parked);
 			}
 		}
-		put_task_stack(k);
 		ret = 0;
 	}
 	return ret;
@@ -503,13 +483,12 @@ int kthread_stop(struct task_struct *k)
 	trace_sched_kthread_stop(k);
 
 	get_task_struct(k);
-	kthread = to_live_kthread(k);
+	kthread = k->kthread;
 	if (kthread) {
 		set_bit(KTHREAD_SHOULD_STOP, &kthread->flags);
 		__kthread_unpark(k, kthread);
 		wake_up_process(k);
 		wait_for_completion(&kthread->exited);
-		put_task_stack(k);
 	}
 	ret = k->exit_code;
 	put_task_struct(k);

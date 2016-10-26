@@ -134,6 +134,7 @@ struct perf_event_context;
 struct blk_plug;
 struct filename;
 struct nameidata;
+struct kthread;
 
 #define VMACACHE_BITS 2
 #define VMACACHE_SIZE (1U << VMACACHE_BITS)
@@ -1646,6 +1647,8 @@ struct task_struct {
 	struct completion *vfork_done;		/* for vfork() */
 	int __user *set_child_tid;		/* CLONE_CHILD_SETTID */
 	int __user *clear_child_tid;		/* CLONE_CHILD_CLEARTID */
+
+	struct kthread *kthread;
 
 	cputime_t utime, stime, utimescaled, stimescaled;
 	cputime_t gtime;
