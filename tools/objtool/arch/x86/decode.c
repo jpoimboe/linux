@@ -206,7 +206,7 @@ int arch_decode_instruction(struct elf *elf, struct section *sec,
 		break;
 
 	case 0x89:
-		if (insn.rex_prefix.nbytes && insn.modrm.bytes &&
+		if (insn.rex_prefix.nbytes && insn.modrm.nbytes &&
 		    insn.rex_prefix.bytes[0] == 0x48 &&
 		    insn.modrm.bytes[0] == 0xe5) {
 
@@ -277,7 +277,7 @@ int arch_decode_instruction(struct elf *elf, struct section *sec,
 		break;
 
 	case 0x8d:
-		if (insn.rex_prefix.nbytes && insn.modrm.bytes &&
+		if (insn.rex_prefix.nbytes && insn.modrm.nbytes &&
 		    insn.rex_prefix.bytes[0] == 0x48 &&
 		    insn.modrm.bytes[0] == 0x65) {
 
@@ -291,8 +291,8 @@ int arch_decode_instruction(struct elf *elf, struct section *sec,
 			break;
 		}
 
-		if (insn.rex_prefix.bytes && insn.modrm.bytes &&
-		    insn.sib.bytes && insn.rex_prefix.bytes[0] == 0x4c &&
+		if (insn.rex_prefix.nbytes && insn.modrm.nbytes &&
+		    insn.sib.nbytes && insn.rex_prefix.bytes[0] == 0x4c &&
 		    insn.modrm.bytes[0] == 0x54 && insn.sib.bytes[0] == 0x24 &&
 		    insn.displacement.value == 8) {
 
@@ -312,7 +312,7 @@ int arch_decode_instruction(struct elf *elf, struct section *sec,
 			break;
 		}
 
-		if (drap && insn.rex_prefix.bytes && insn.modrm.bytes &&
+		if (drap && insn.rex_prefix.nbytes && insn.modrm.nbytes &&
 		    insn.rex_prefix.bytes[0] == 0x49 &&
 		    insn.modrm.bytes[0] == 0x62 &&
 		    insn.displacement.value == -8) {
