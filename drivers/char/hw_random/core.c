@@ -41,6 +41,7 @@
 #include <linux/kthread.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/sched/signal.h>
 #include <linux/random.h>
 #include <linux/err.h>
 #include <linux/uaccess.h>

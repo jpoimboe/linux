@@ -8,6 +8,8 @@
 #include <linux/ctype.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
+#include <linux/sched/clock.h>
+#include <linux/sched/task.h>
 #include <linux/init.h>
 #include <linux/kprobes.h>
 #include <linux/kgdb.h>
