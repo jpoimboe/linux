@@ -9,7 +9,7 @@
 #include <linux/sched/debug.h>
 #include <linux/stacktrace.h>
 #include <linux/kallsyms.h>
-#include <linux/module.h>
+#include <linux/export.h>
 
 static int __save_address(void *data, unsigned long address, int nosched)
 {

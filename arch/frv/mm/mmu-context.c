@@ -190,7 +190,7 @@ int cxn_pin_by_pid(pid_t pid)
 		task_lock(tsk);
 		if (tsk->mm) {
 			mm = tsk->mm;
-			atomic_inc(&mm->mm_users);
+			mmget(mm);
 			ret = 0;
 		}
 		task_unlock(tsk);

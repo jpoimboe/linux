@@ -2463,7 +2463,7 @@ static int drbd_congested(void *congested_data, int bdi_bits)
 
 	if (get_ldev(device)) {
 		q = bdev_get_queue(device->ldev->backing_bdev);
-		r = bdi_congested(&q->backing_dev_info, bdi_bits);
+		r = bdi_congested(q->backing_dev_info, bdi_bits);
 		put_ldev(device);
 		if (r)
 			reason = 'b';
@@ -2835,8 +2835,8 @@ enum drbd_ret_code drbd_create_device(struct drbd_config_context *adm_ctx, unsig
 	/* we have no partitions. we contain only ourselves. */
 	device->this_bdev->bd_contains = device->this_bdev;
 
-	q->backing_dev_info.congested_fn = drbd_congested;
-	q->backing_dev_info.congested_data = device;
+	q->backing_dev_info->congested_fn = drbd_congested;
+	q->backing_dev_info->congested_data = device;
 
 	blk_queue_make_request(q, drbd_make_request);
 	blk_queue_write_cache(q, true, true);
@@ -2916,11 +2916,9 @@ out_idr_remove_vol:
 	idr_remove(&connection->peer_devices, vnr);
 out_idr_remove_from_resource:
 	for_each_connection(connection, resource) {
-		peer_device = idr_find(&connection->peer_devices, vnr);
-		if (peer_device) {
-			idr_remove(&connection->peer_devices, vnr);
+		peer_device = idr_remove(&connection->peer_devices, vnr);
+		if (peer_device)
 			kref_put(&connection->kref, drbd_destroy_connection);
-		}
 	}
 	for_each_peer_device_safe(peer_device, tmp_peer_device, device) {
 		list_del(&peer_device->peer_devices);

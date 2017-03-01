@@ -28,6 +28,9 @@
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
+#ifdef CONFIG_PARAVIRT
+#include <asm/paravirt.h>
+#endif
 
 #include "sched.h"
 #include "../workqueue_internal.h"
@@ -1092,6 +1095,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	int ret = 0;
 
 	rq = task_rq_lock(p, &rf);
+	update_rq_clock(rq);
 
 	if (p->flags & PF_KTHREAD) {
 		/*
@@ -2849,7 +2853,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 
 	if (!mm) {
 		next->active_mm = oldmm;
-		atomic_inc(&oldmm->mm_count);
+		mmgrab(oldmm);
 		enter_lazy_tlb(oldmm, next);
 	} else
 		switch_mm_irqs_off(oldmm, mm, next);
@@ -5574,7 +5578,7 @@ static void migrate_tasks(struct rq *dead_rq)
 {
 	struct rq *rq = dead_rq;
 	struct task_struct *next, *stop = rq->stop;
-	struct rq_flags rf, old_rf;
+	struct rq_flags rf;
 	int dest_cpu;
 
 	/*
@@ -5593,7 +5597,9 @@ static void migrate_tasks(struct rq *dead_rq)
 	 * class method both need to have an up-to-date
 	 * value of rq->clock[_task]
 	 */
+	rq_pin_lock(rq, &rf);
 	update_rq_clock(rq);
+	rq_unpin_lock(rq, &rf);
 
 	for (;;) {
 		/*
@@ -5606,7 +5612,7 @@ static void migrate_tasks(struct rq *dead_rq)
 		/*
 		 * pick_next_task() assumes pinned rq->lock:
 		 */
-		rq_pin_lock(rq, &rf);
+		rq_repin_lock(rq, &rf);
 		next = pick_next_task(rq, &fake_task, &rf);
 		BUG_ON(!next);
 		next->sched_class->put_prev_task(rq, next);
@@ -5635,13 +5641,6 @@ static void migrate_tasks(struct rq *dead_rq)
 			continue;
 		}
 
-		/*
-		 * __migrate_task() may return with a different
-		 * rq->lock held and a new cookie in 'rf', but we need
-		 * to preserve rf::clock_update_flags for 'dead_rq'.
-		 */
-		old_rf = rf;
-
 		/* Find suitable destination for @next, with force if needed. */
 		dest_cpu = select_fallback_rq(dead_rq->cpu, next);
 
@@ -5650,7 +5649,6 @@ static void migrate_tasks(struct rq *dead_rq)
 			raw_spin_unlock(&rq->lock);
 			rq = dead_rq;
 			raw_spin_lock(&rq->lock);
-			rf = old_rf;
 		}
 		raw_spin_unlock(&next->pi_lock);
 	}
@@ -6112,7 +6110,7 @@ void __init sched_init(void)
 	/*
 	 * The boot idle thread does lazy MMU switching as well:
 	 */
-	atomic_inc(&init_mm.mm_count);
+	mmgrab(&init_mm);
 	enter_lazy_tlb(&init_mm, current);
 
 	/*
@@ -6421,14 +6419,14 @@ void sched_move_task(struct task_struct *tsk)
 
 	if (queued)
 		dequeue_task(rq, tsk, DEQUEUE_SAVE | DEQUEUE_MOVE);
-	if (unlikely(running))
+	if (running)
 		put_prev_task(rq, tsk);
 
 	sched_change_group(tsk, TASK_MOVE_GROUP);
 
 	if (queued)
 		enqueue_task(rq, tsk, ENQUEUE_RESTORE | ENQUEUE_MOVE);
-	if (unlikely(running))
+	if (running)
 		set_curr_task(rq, tsk);
 
 	task_rq_unlock(rq, tsk, &rf);
@@ -6833,9 +6831,18 @@ cpu_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 	if (IS_ERR(tg))
 		return ERR_PTR(-ENOMEM);
 
-	sched_online_group(tg, parent);
-
 	return &tg->css;
+}
+
+/* Expose task group only after completing cgroup initialization */
+static int cpu_cgroup_css_online(struct cgroup_subsys_state *css)
+{
+	struct task_group *tg = css_tg(css);
+	struct task_group *parent = css_tg(css->parent);
+
+	if (parent)
+		sched_online_group(tg, parent);
+	return 0;
 }
 
 static void cpu_cgroup_css_released(struct cgroup_subsys_state *css)
@@ -7243,6 +7250,7 @@ static struct cftype cpu_files[] = {
 
 struct cgroup_subsys cpu_cgrp_subsys = {
 	.css_alloc	= cpu_cgroup_css_alloc,
+	.css_online	= cpu_cgroup_css_online,
 	.css_released	= cpu_cgroup_css_released,
 	.css_free	= cpu_cgroup_css_free,
 	.fork		= cpu_cgroup_fork,

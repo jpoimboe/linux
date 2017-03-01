@@ -28,11 +28,11 @@
 #include <linux/mman.h>
 #include <linux/sched/signal.h>
 #include <linux/sched/mm.h>
-#include <linux/module.h>
 #include <linux/random.h>
 #include <linux/compat.h>
 #include <linux/security.h>
 #include <asm/pgalloc.h>
+#include <asm/elf.h>
 
 static unsigned long stack_maxrandom_size(void)
 {

@@ -22,6 +22,8 @@
 #ifndef IVTV_DRIVER_H
 #define IVTV_DRIVER_H
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 /* Internal header for ivtv project:
  * Driver for the cx23415/6 chip.
  * Author: Kevin Thayer (nufan_wfk at yahoo.com)
