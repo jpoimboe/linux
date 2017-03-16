@@ -8,12 +8,13 @@
 #include <linux/sched/task.h>
 #include <linux/vmalloc.h>
 
+#include <asm/e820/types.h>
 #include <asm/tlbflush.h>
 #include <asm/sections.h>
 #include <asm/fixmap.h>
 
 extern pgd_t early_level4_pgt[PTRS_PER_PGD];
-extern struct range pfn_mapped[E820_X_MAX];
+extern struct range pfn_mapped[E820_MAX_ENTRIES];
 
 static int __init map_range(struct range *range)
 {
@@ -105,7 +106,7 @@ void __init kasan_init(void)
 	kasan_populate_zero_shadow((void *)KASAN_SHADOW_START,
 			kasan_mem_to_shadow((void *)PAGE_OFFSET));
 
-	for (i = 0; i < E820_X_MAX; i++) {
+	for (i = 0; i < E820_MAX_ENTRIES; i++) {
 		if (pfn_mapped[i].end == 0)
 			break;
 
