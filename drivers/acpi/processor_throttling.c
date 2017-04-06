@@ -901,10 +901,16 @@ static int acpi_processor_get_throttling_ptc(struct acpi_processor *pr)
 	return 0;
 }
 
+static long __acpi_processor_get_throttling(void *data)
+{
+	struct acpi_processor *pr = data;
+
+	return pr->throttling.acpi_processor_get_throttling(pr);
+}
+
 static int acpi_processor_get_throttling(struct acpi_processor *pr)
 {
-	cpumask_var_t saved_mask;
-	int ret;
+	long ret;
 
 	if (!pr)
 		return -EINVAL;
@@ -912,25 +918,16 @@ static int acpi_processor_get_throttling(struct acpi_processor *pr)
 	if (!pr->flags.throttling)
 		return -ENODEV;
 
-	if (!alloc_cpumask_var(&saved_mask, GFP_KERNEL))
-		return -ENOMEM;
-
 	/*
-	 * Migrate task to the cpu pointed by pr.
+	 * This is either called from the CPU hotplug callback of
+	 * processor_driver or via the ACPI probe function. In the latter
+	 * case the CPU is not guaranteed to be online. Both call sites are
+	 * protected against CPU hotplug.
 	 */
-	cpumask_copy(saved_mask, &current->cpus_allowed);
-	/* FIXME: use work_on_cpu() */
-	if (set_cpus_allowed_ptr(current, cpumask_of(pr->id))) {
-		/* Can't migrate to the target pr->id CPU. Exit */
-		free_cpumask_var(saved_mask);
+	if (!cpu_online(pr->id))
 		return -ENODEV;
-	}
-	ret = pr->throttling.acpi_processor_get_throttling(pr);
-	/* restore the previous state */
-	set_cpus_allowed_ptr(current, saved_mask);
-	free_cpumask_var(saved_mask);
 
-	return ret;
+	return work_on_cpu(pr->id, __acpi_processor_get_throttling, pr);
 }
 
 static int acpi_processor_get_fadt_info(struct acpi_processor *pr)
