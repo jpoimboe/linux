@@ -598,6 +598,12 @@ static void sn_hwperf_call_sal(void *info)
 	op_info->ret = r;
 }
 
+static long sn_hwperf_call_sal_work(void *info)
+{
+	sn_hwperf_call_sal(info);
+	return 0;
+}
+
 static int sn_hwperf_op_cpu(struct sn_hwperf_op_info *op_info)
 {
 	u32 cpu;
@@ -629,13 +635,9 @@ static int sn_hwperf_op_cpu(struct sn_hwperf_op_info *op_info)
 			/* use an interprocessor interrupt to call SAL */
 			smp_call_function_single(cpu, sn_hwperf_call_sal,
 				op_info, 1);
-		}
-		else {
-			/* migrate the task before calling SAL */ 
-			save_allowed = current->cpus_allowed;
-			set_cpus_allowed_ptr(current, cpumask_of(cpu));
-			sn_hwperf_call_sal(op_info);
-			set_cpus_allowed_ptr(current, &save_allowed);
+		} else {
+			/* Call on the target CPU */
+			work_on_cpu_safe(cpu, sn_hwperf_call_sal, op_info);
 		}
 	}
 	r = op_info->ret;
