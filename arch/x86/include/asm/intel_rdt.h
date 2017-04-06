@@ -40,6 +40,8 @@ struct rdtgroup {
 /* List of all resource groups */
 extern struct list_head rdt_all_groups;
 
+extern int max_name_width, max_data_width;
+
 int __init rdtgroup_init(void);
 
 /**
@@ -73,13 +75,11 @@ struct rftype {
  * @name:			Name to use in "schemata" file
  * @num_closid:			Number of CLOSIDs available
  * @max_cbm:			Largest Cache Bit Mask allowed
+ * @data_width:		Character width of data when displaying
  * @min_cbm_bits:		Minimum number of consecutive bits to be set
  *				in a cache bit mask
  * @domains:			All domains for this resource
- * @num_domains:		Number of domains active
  * @msr_base:			Base MSR address for CBMs
- * @tmp_cbms:			Scratch space when updating schemata
- * @num_tmp_cbms:		Number of CBMs in tmp_cbms
  * @cache_level:		Which cache level defines scope of this domain
  * @cbm_idx_multi:		Multiplier of CBM index
  * @cbm_idx_offset:		Offset of CBM index. CBM index is computed by:
@@ -93,11 +93,9 @@ struct rdt_resource {
 	int			cbm_len;
 	int			min_cbm_bits;
 	u32			max_cbm;
+	int			data_width;
 	struct list_head	domains;
-	int			num_domains;
 	int			msr_base;
-	u32			*tmp_cbms;
-	int			num_tmp_cbms;
 	int			cache_level;
 	int			cbm_idx_multi;
 	int			cbm_idx_offset;
@@ -109,12 +107,16 @@ struct rdt_resource {
  * @id:		unique id for this instance
  * @cpu_mask:	which cpus share this resource
  * @cbm:	array of cache bit masks (indexed by CLOSID)
+ * @new_cbm:	new cbm value to be loaded
+ * @have_new_cbm: did user provide new_cbm for this domain
  */
 struct rdt_domain {
 	struct list_head	list;
 	int			id;
 	struct cpumask		cpu_mask;
 	u32			*cbm;
+	u32			new_cbm;
+	bool			have_new_cbm;
 };
 
 /**
