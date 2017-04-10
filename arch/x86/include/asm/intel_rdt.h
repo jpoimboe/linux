@@ -46,16 +46,17 @@ int __init rdtgroup_init(void);
 
 /**
  * struct rftype - describe each file in the resctrl file system
- * @name: file name
- * @mode: access mode
- * @kf_ops: operations
- * @seq_show: show content of the file
- * @write: write to the file
+ * @name:	File name
+ * @mode:	Access mode
+ * @kf_ops:	File operations
+ * @seq_show:	Show content of the file
+ * @write:	Write to the file
  */
 struct rftype {
 	char			*name;
 	umode_t			mode;
 	struct kernfs_ops	*kf_ops;
+	unsigned long		flags;
 
 	int (*seq_show)(struct kernfs_open_file *of,
 			struct seq_file *sf, void *v);
@@ -75,7 +76,7 @@ struct rftype {
  * @name:			Name to use in "schemata" file
  * @num_closid:			Number of CLOSIDs available
  * @max_cbm:			Largest Cache Bit Mask allowed
- * @data_width:		Character width of data when displaying
+ * @data_width:			Character width of data when displaying
  * @min_cbm_bits:		Minimum number of consecutive bits to be set
  *				in a cache bit mask
  * @domains:			All domains for this resource
@@ -151,7 +152,7 @@ enum {
 
 #define for_each_capable_rdt_resource(r)				      \
 	for (r = rdt_resources_all; r < rdt_resources_all + RDT_NUM_RESOURCES;\
-	     r++) 							      \
+	     r++)							      \
 		if (r->capable)
 
 #define for_each_enabled_rdt_resource(r)				      \
