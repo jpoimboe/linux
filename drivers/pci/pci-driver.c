@@ -320,10 +320,19 @@ static long local_pci_probe(void *_ddi)
 	return 0;
 }
 
+static bool pci_physfn_is_probed(struct pci_dev *dev)
+{
+#ifdef CONFIG_ATS
+	return dev->physfn->is_probed;
+#else
+	return false;
+#endif
+}
+
 static int pci_call_probe(struct pci_driver *drv, struct pci_dev *dev,
 			  const struct pci_device_id *id)
 {
-	int error, node;
+	int error, node, cpu;
 	struct drv_dev_and_id ddi = { drv, dev, id };
 
 	/*
@@ -349,13 +358,13 @@ static int pci_call_probe(struct pci_driver *drv, struct pci_dev *dev,
 	if (node >= 0 && node != numa_node_id()) {
 		int cpu;
 
-		get_online_cpus();
+		cpu_hotplug_disable();
 		cpu = cpumask_any_and(cpumask_of_node(node), cpu_online_mask);
 		if (cpu < nr_cpu_ids)
 			error = work_on_cpu(cpu, local_pci_probe, &ddi);
 		else
 			error = local_pci_probe(&ddi);
-		put_online_cpus();
+		cpu_hotplug_enable();
 	} else
 		error = local_pci_probe(&ddi);
 
