@@ -7724,7 +7724,6 @@ static int swevent_hlist_get(void)
 {
 	int err, cpu, failed_cpu;
 
-	get_online_cpus();
 	for_each_possible_cpu(cpu) {
 		err = swevent_hlist_get_cpu(cpu);
 		if (err) {
@@ -7732,8 +7731,6 @@ static int swevent_hlist_get(void)
 			goto fail;
 		}
 	}
-	put_online_cpus();
-
 	return 0;
 fail:
 	for_each_possible_cpu(cpu) {
@@ -7741,8 +7738,6 @@ fail:
 			break;
 		swevent_hlist_put_cpu(cpu);
 	}
-
-	put_online_cpus();
 	return err;
 }
 
