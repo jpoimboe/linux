@@ -151,6 +151,7 @@ static inline void tick_nohz_init(void) { }
 
 #ifdef CONFIG_NO_HZ_COMMON
 extern unsigned long tick_nohz_active;
+extern u64 get_jiffies_update(unsigned long *basej);
 #else
 #define tick_nohz_active (0)
 #endif
@@ -163,5 +164,6 @@ static inline void timers_update_migration(bool update_nohz) { }
 
 DECLARE_PER_CPU(struct hrtimer_cpu_base, hrtimer_bases);
 
-extern u64 get_next_timer_interrupt(unsigned long basej, u64 basem);
+extern u64 get_next_timer_interrupt(unsigned long basej, u64 basem,
+				    u64 *global_evt);
 void timer_clear_idle(void);

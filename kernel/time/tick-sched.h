@@ -27,7 +27,9 @@ enum tick_nohz_mode {
  *			timer is modified for nohz sleeps. This is necessary
  *			to resume the tick timer operation in the timeline
  *			when the CPU returns from nohz sleep.
+ * @inidle:		Indicator that the CPU is in the tick idle mode
  * @tick_stopped:	Indicator that the idle tick has been stopped
+ * @tmigr_idle:		Indicator that the CPU is idle vs. timer migration
  * @idle_jiffies:	jiffies at the entry to idle for idle time accounting
  * @idle_calls:		Total number of idle calls
  * @idle_sleeps:	Number of idle calls, where the sched tick was stopped
@@ -46,6 +48,7 @@ struct tick_sched {
 	ktime_t				last_tick;
 	int				inidle;
 	int				tick_stopped;
+	int				tmigr_idle;
 	unsigned long			idle_jiffies;
 	unsigned long			idle_calls;
 	unsigned long			idle_sleeps;
