@@ -15,6 +15,7 @@
 #include <linux/static_key.h>
 #include <linux/jump_label_ratelimit.h>
 #include <linux/bug.h>
+#include <linux/cpu.h>
 
 #ifdef HAVE_JUMP_LABEL
 
@@ -100,7 +101,7 @@ void static_key_disable(struct static_key *key)
 }
 EXPORT_SYMBOL_GPL(static_key_disable);
 
-void static_key_slow_inc(struct static_key *key)
+void __static_key_slow_inc(struct static_key *key)
 {
 	int v, v1;
 
@@ -124,6 +125,12 @@ void static_key_slow_inc(struct static_key *key)
 			return;
 	}
 
+	/*
+	 * A number of architectures need to synchronize I$ across
+	 * the all CPUs, for that to be serialized against CPU hot-plug
+	 * we need to avoid CPUs coming online.
+	 */
+	lockdep_assert_hotplug_held();
 	jump_label_lock();
 	if (atomic_read(&key->enabled) == 0) {
 		atomic_set(&key->enabled, -1);
@@ -134,11 +141,25 @@ void static_key_slow_inc(struct static_key *key)
 	}
 	jump_label_unlock();
 }
+
+void static_key_slow_inc(struct static_key *key)
+{
+	get_online_cpus();
+	__static_key_slow_inc(key);
+	put_online_cpus();
+}
 EXPORT_SYMBOL_GPL(static_key_slow_inc);
+
+void static_key_slow_inc_cpuslocked(struct static_key *key)
+{
+	__static_key_slow_inc(key);
+}
+EXPORT_SYMBOL_GPL(static_key_slow_inc_cpuslocked);
 
 static void __static_key_slow_dec(struct static_key *key,
 		unsigned long rate_limit, struct delayed_work *work)
 {
+	lockdep_assert_hotplug_held();
 	/*
 	 * The negative count check is valid even when a negative
 	 * key->enabled is in use by static_key_slow_inc(); a
@@ -165,13 +186,17 @@ static void jump_label_update_timeout(struct work_struct *work)
 {
 	struct static_key_deferred *key =
 		container_of(work, struct static_key_deferred, work.work);
+	get_online_cpus();
 	__static_key_slow_dec(&key->key, 0, NULL);
+	put_online_cpus();
 }
 
 void static_key_slow_dec(struct static_key *key)
 {
 	STATIC_KEY_CHECK_USE();
+	get_online_cpus();
 	__static_key_slow_dec(key, 0, NULL);
+	put_online_cpus();
 }
 EXPORT_SYMBOL_GPL(static_key_slow_dec);
 
@@ -592,6 +617,10 @@ jump_label_module_notify(struct notifier_block *self, unsigned long val,
 
 	switch (val) {
 	case MODULE_STATE_COMING:
+		/*
+		 * XXX do we need get_online_cpus() ?  the module isn't
+		 * executable yet, so nothing should be looking at our code.
+		 */
 		jump_label_lock();
 		ret = jump_label_add_module(mod);
 		if (ret) {
