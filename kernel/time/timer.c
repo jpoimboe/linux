@@ -51,6 +51,7 @@
 #include <asm/timex.h>
 #include <asm/io.h>
 
+#include "timer_migration.h"
 #include "tick-internal.h"
 
 #define CREATE_TRACE_POINTS
@@ -185,12 +186,18 @@ EXPORT_SYMBOL(jiffies_64);
 #define WHEEL_SIZE	(LVL_SIZE * LVL_DEPTH)
 
 #ifdef CONFIG_NO_HZ_COMMON
-# define NR_BASES	2
-# define BASE_STD	0
-# define BASE_DEF	1
+/*
+ * If multiple bases need to be locked, use the base ordering for lock
+ * nesting, i.e. lowest number first.
+ */
+# define NR_BASES	3
+# define BASE_LOCAL	0
+# define BASE_GLOBAL	1
+# define BASE_DEF	2
 #else
 # define NR_BASES	1
-# define BASE_STD	0
+# define BASE_LOCAL	0
+# define BASE_GLOBAL	0
 # define BASE_DEF	0
 #endif
 
@@ -214,20 +221,22 @@ unsigned int sysctl_timer_migration = 1;
 
 void timers_update_migration(bool update_nohz)
 {
-	bool on = sysctl_timer_migration && tick_nohz_active;
+	bool on = sysctl_timer_migration && tick_nohz_active && tmigr_enabled;
 	unsigned int cpu;
 
 	/* Avoid the loop, if nothing to update */
-	if (this_cpu_read(timer_bases[BASE_STD].migration_enabled) == on)
+	if (this_cpu_read(timer_bases[BASE_GLOBAL].migration_enabled) == on)
 		return;
 
 	for_each_possible_cpu(cpu) {
-		per_cpu(timer_bases[BASE_STD].migration_enabled, cpu) = on;
+		per_cpu(timer_bases[BASE_LOCAL].migration_enabled, cpu) = on;
+		per_cpu(timer_bases[BASE_GLOBAL].migration_enabled, cpu) = on;
 		per_cpu(timer_bases[BASE_DEF].migration_enabled, cpu) = on;
 		per_cpu(hrtimer_bases.migration_enabled, cpu) = on;
 		if (!update_nohz)
 			continue;
-		per_cpu(timer_bases[BASE_STD].nohz_active, cpu) = true;
+		per_cpu(timer_bases[BASE_LOCAL].nohz_active, cpu) = true;
+		per_cpu(timer_bases[BASE_GLOBAL].nohz_active, cpu) = true;
 		per_cpu(timer_bases[BASE_DEF].nohz_active, cpu) = true;
 		per_cpu(hrtimer_bases.nohz_active, cpu) = true;
 	}
@@ -810,7 +819,10 @@ static int detach_if_pending(struct timer_list *timer, struct timer_base *base,
 
 static inline struct timer_base *get_timer_cpu_base(u32 tflags, u32 cpu)
 {
-	struct timer_base *base = per_cpu_ptr(&timer_bases[BASE_STD], cpu);
+	int index = tflags & TIMER_PINNED ? BASE_LOCAL : BASE_GLOBAL;
+	struct timer_base *base;
+
+	base = per_cpu_ptr(&timer_bases[index], cpu);
 
 	/*
 	 * If the timer is deferrable and nohz is active then we need to use
@@ -824,7 +836,10 @@ static inline struct timer_base *get_timer_cpu_base(u32 tflags, u32 cpu)
 
 static inline struct timer_base *get_timer_this_cpu_base(u32 tflags)
 {
-	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
+	int index = tflags & TIMER_PINNED ? BASE_LOCAL : BASE_GLOBAL;
+	struct timer_base *base;
+
+	base = this_cpu_ptr(&timer_bases[index]);
 
 	/*
 	 * If the timer is deferrable and nohz is active then we need to use
@@ -842,18 +857,6 @@ static inline struct timer_base *get_timer_base(u32 tflags)
 }
 
 #ifdef CONFIG_NO_HZ_COMMON
-static inline struct timer_base *
-get_target_base(struct timer_base *base, unsigned tflags)
-{
-#ifdef CONFIG_SMP
-	if ((tflags & TIMER_PINNED) || !base->migration_enabled)
-		return get_timer_this_cpu_base(tflags);
-	return get_timer_cpu_base(tflags, get_nohz_timer_target());
-#else
-	return get_timer_this_cpu_base(tflags);
-#endif
-}
-
 static inline void forward_timer_base(struct timer_base *base)
 {
 	unsigned long jnow = READ_ONCE(jiffies);
@@ -875,12 +878,6 @@ static inline void forward_timer_base(struct timer_base *base)
 		base->clk = base->next_expiry;
 }
 #else
-static inline struct timer_base *
-get_target_base(struct timer_base *base, unsigned tflags)
-{
-	return get_timer_this_cpu_base(tflags);
-}
-
 static inline void forward_timer_base(struct timer_base *base) { }
 #endif
 
@@ -970,9 +967,7 @@ __mod_timer(struct timer_list *timer, unsigned long expires, bool pending_only)
 	if (!ret && pending_only)
 		goto out_unlock;
 
-	debug_activate(timer, expires);
-
-	new_base = get_target_base(base, timer->flags);
+	new_base = get_timer_this_cpu_base(timer->flags);
 
 	if (base != new_base) {
 		/*
@@ -993,6 +988,8 @@ __mod_timer(struct timer_list *timer, unsigned long expires, bool pending_only)
 				   (timer->flags & ~TIMER_BASEMASK) | base->cpu);
 		}
 	}
+
+	debug_activate(timer, expires);
 
 	/* Try to forward a stale timer base clock */
 	forward_timer_base(base);
@@ -1358,8 +1355,11 @@ static int next_pending_bucket(struct timer_base *base, unsigned offset,
 /*
  * Search the first expiring timer in the various clock levels. Caller must
  * hold base->lock.
+ *
+ * Stores the next expiry time in base. The return value indicates whether
+ * the base is empty or not.
  */
-static unsigned long __next_timer_interrupt(struct timer_base *base)
+static bool __next_timer_interrupt(struct timer_base *base)
 {
 	unsigned long clk, next, adj;
 	unsigned lvl, offset = 0;
@@ -1416,7 +1416,10 @@ static unsigned long __next_timer_interrupt(struct timer_base *base)
 		clk >>= LVL_CLK_SHIFT;
 		clk += adj;
 	}
-	return next;
+	/* Store the next event in the base */
+	base->next_expiry = next;
+	/* Return whether the base is empty or not */
+	return next == base->clk + NEXT_TIMER_MAX_DELTA;
 }
 
 /*
@@ -1456,55 +1459,103 @@ static u64 cmp_next_hrtimer_event(u64 basem, u64 expires)
  * get_next_timer_interrupt - return the time (clock mono) of the next timer
  * @basej:	base time jiffies
  * @basem:	base time clock monotonic
+ * @global_evt:	Pointer to store the expiry time of the next global timer
  *
  * Returns the tick aligned clock monotonic time of the next pending
  * timer or KTIME_MAX if no timer is pending.
  */
-u64 get_next_timer_interrupt(unsigned long basej, u64 basem)
+u64 get_next_timer_interrupt(unsigned long basej, u64 basem, u64 *global_evt)
 {
-	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
-	u64 expires = KTIME_MAX;
-	unsigned long nextevt;
-	bool is_max_delta;
+	unsigned long nextevt, nextevt_local, nextevt_global;
+	bool local_empty, global_empty, local_first, is_idle;
+	struct timer_base *base_local, *base_global;
+	u64 local_evt = KTIME_MAX;
+
+	/* Preset global event */
+	*global_evt = KTIME_MAX;
 
 	/*
 	 * Pretend that there is no timer pending if the cpu is offline.
 	 * Possible pending timers will be migrated later to an active cpu.
 	 */
 	if (cpu_is_offline(smp_processor_id()))
-		return expires;
+		return local_evt;
 
-	spin_lock(&base->lock);
-	nextevt = __next_timer_interrupt(base);
-	is_max_delta = (nextevt == base->clk + NEXT_TIMER_MAX_DELTA);
-	base->next_expiry = nextevt;
+	base_local = this_cpu_ptr(&timer_bases[BASE_LOCAL]);
+	base_global = this_cpu_ptr(&timer_bases[BASE_GLOBAL]);
+
+	spin_lock(&base_global->lock);
+	spin_lock_nested(&base_local->lock, SINGLE_DEPTH_NESTING);
+
+	local_empty = __next_timer_interrupt(base_local);
+	nextevt_local = base_local->next_expiry;
+
+	global_empty = __next_timer_interrupt(base_global);
+	nextevt_global = base_global->next_expiry;
+
 	/*
 	 * We have a fresh next event. Check whether we can forward the
 	 * base. We can only do that when @basej is past base->clk
 	 * otherwise we might rewind base->clk.
 	 */
-	if (time_after(basej, base->clk)) {
-		if (time_after(nextevt, basej))
-			base->clk = basej;
-		else if (time_after(nextevt, base->clk))
-			base->clk = nextevt;
+	if (time_after(basej, base_local->clk)) {
+		if (time_after(nextevt_local, basej))
+			base_local->clk = basej;
+		else if (time_after(nextevt_local, base_local->clk))
+			base_local->clk = nextevt_local;
 	}
 
-	if (time_before_eq(nextevt, basej)) {
-		expires = basem;
-		base->is_idle = false;
-	} else {
-		if (!is_max_delta)
-			expires = basem + (nextevt - basej) * TICK_NSEC;
-		/*
-		 * If we expect to sleep more than a tick, mark the base idle:
-		 */
-		if ((expires - basem) > TICK_NSEC)
-			base->is_idle = true;
+	if (time_after(basej, base_global->clk)) {
+		if (time_after(nextevt_global, basej))
+			base_global->clk = basej;
+		else if (time_after(nextevt_global, base_global->clk))
+			base_global->clk = nextevt_global;
 	}
-	spin_unlock(&base->lock);
 
-	return cmp_next_hrtimer_event(basem, expires);
+	/* Base is idle if the next event is more than a tick away. */
+	local_first = time_before_eq(nextevt_local, nextevt_global);
+	nextevt = local_first ? nextevt_local : nextevt_global;
+	is_idle = time_after(nextevt, basej + 1);
+
+	/* We need to mark both bases in sync */
+	base_local->is_idle = base_global->is_idle = is_idle;
+
+	spin_unlock(&base_local->lock);
+	spin_unlock(&base_global->lock);
+
+	/*
+	 * If the bases are not marked idle, i.e one of the events is at
+	 * max. one tick away, use the next event for calculating next
+	 * local expiry value. The next global event is left as KTIME_MAX,
+	 * so this CPU will not queue itself in the global expiry
+	 * mechanism.
+	 */
+	if (!is_idle) {
+		/* If we missed a tick already, force 0 delta */
+		if (time_before_eq(nextevt, basej))
+			nextevt = basej;
+		local_evt = basem + (nextevt - basej) * TICK_NSEC;
+		return cmp_next_hrtimer_event(basem, local_evt);
+	}
+
+	/*
+	 * If the bases are marked idle, i.e. the next event on both the
+	 * local and the global queue are farther away than a tick,
+	 * evaluate both bases. No need to check whether one of the bases
+	 * has an already expired timer as this is caught by the !is_idle
+	 * condition above.
+	 */
+	if (!local_empty)
+		local_evt = basem + (nextevt_local - basej) * TICK_NSEC;
+
+	/*
+	 * If the local queue expires first, there is no requirement for
+	 * queuing the CPU in the global expiry mechanism.
+	 */
+	if (!local_first && !global_empty)
+		*global_evt = basem + (nextevt_global - basej) * TICK_NSEC;
+
+	return cmp_next_hrtimer_event(basem, local_evt);
 }
 
 /**
@@ -1514,7 +1565,7 @@ u64 get_next_timer_interrupt(unsigned long basej, u64 basem)
  */
 void timer_clear_idle(void)
 {
-	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
+	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_LOCAL]);
 
 	/*
 	 * We do this unlocked. The worst outcome is a remote enqueue sending
@@ -1522,6 +1573,9 @@ void timer_clear_idle(void)
 	 * sending the IPI a few instructions smaller for the cost of taking
 	 * the lock in the exit from idle path.
 	 */
+	base->is_idle = false;
+
+	base = this_cpu_ptr(&timer_bases[BASE_GLOBAL]);
 	base->is_idle = false;
 }
 
@@ -1534,7 +1588,10 @@ static int collect_expired_timers(struct timer_base *base,
 	 * the next expiring timer.
 	 */
 	if ((long)(jiffies - base->clk) > 2) {
-		unsigned long next = __next_timer_interrupt(base);
+		unsigned long next;
+
+		__next_timer_interrupt(base);
+		next = base->next_expiry;
 
 		/*
 		 * If the next timer is ahead of time forward to current
@@ -1549,13 +1606,27 @@ static int collect_expired_timers(struct timer_base *base,
 	}
 	return __collect_expired_timers(base, heads);
 }
-#else
+
+static inline void __run_timers(struct timer_base *base);
+
+#ifdef CONFIG_SMP
+void timer_expire_remote(unsigned int cpu)
+{
+	struct timer_base *base = per_cpu_ptr(&timer_bases[BASE_GLOBAL], cpu);
+
+	spin_lock_irq(&base->lock);
+	__run_timers(base);
+	spin_unlock_irq(&base->lock);
+}
+#endif
+
+#else /* CONFIG_NO_HZ_COMMON */
 static inline int collect_expired_timers(struct timer_base *base,
 					 struct hlist_head *heads)
 {
 	return __collect_expired_timers(base, heads);
 }
-#endif
+#endif /* !CONFIG_NO_HZ_COMMON */
 
 /*
  * Called from the timer interrupt handler to charge one tick to the current
@@ -1581,16 +1652,13 @@ void update_process_times(int user_tick)
 /**
  * __run_timers - run all expired timers (if any) on this CPU.
  * @base: the timer vector to be processed.
+ *
+ * Caller must hold the base lock.
  */
 static inline void __run_timers(struct timer_base *base)
 {
 	struct hlist_head heads[LVL_DEPTH];
 	int levels;
-
-	if (!time_after_eq(jiffies, base->clk))
-		return;
-
-	spin_lock_irq(&base->lock);
 
 	while (time_after_eq(jiffies, base->clk)) {
 
@@ -1601,7 +1669,20 @@ static inline void __run_timers(struct timer_base *base)
 			expire_timers(base, heads + levels);
 	}
 	base->running_timer = NULL;
-	spin_unlock_irq(&base->lock);
+}
+
+static void run_timer_base(int index, bool check_nohz)
+{
+	struct timer_base *base = this_cpu_ptr(&timer_bases[index]);
+
+	if (check_nohz && !base->nohz_active)
+		return;
+
+	if (time_after_eq(jiffies, base->clk)) {
+		spin_lock_irq(&base->lock);
+		__run_timers(base);
+		spin_unlock_irq(&base->lock);
+	}
 }
 
 /*
@@ -1609,11 +1690,17 @@ static inline void __run_timers(struct timer_base *base)
  */
 static __latent_entropy void run_timer_softirq(struct softirq_action *h)
 {
-	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
+	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_LOCAL]);
 
-	__run_timers(base);
-	if (IS_ENABLED(CONFIG_NO_HZ_COMMON) && base->nohz_active)
-		__run_timers(this_cpu_ptr(&timer_bases[BASE_DEF]));
+	run_timer_base(BASE_LOCAL, false);
+
+	if (IS_ENABLED(CONFIG_NO_HZ_COMMON)) {
+		run_timer_base(BASE_GLOBAL, false);
+		run_timer_base(BASE_DEF, true);
+
+		if (base->nohz_active)
+			tmigr_handle_remote();
+	}
 }
 
 /*
@@ -1621,7 +1708,7 @@ static __latent_entropy void run_timer_softirq(struct softirq_action *h)
  */
 void run_local_timers(void)
 {
-	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
+	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_LOCAL]);
 
 	hrtimer_run_queues();
 	/* Raise the softirq only if required. */
