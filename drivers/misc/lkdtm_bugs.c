@@ -137,9 +137,17 @@ void lkdtm_HUNG_TASK(void)
 	schedule();
 }
 
+#ifdef CONFIG_FAST_REFCOUNT
+#define REFCOUNT_MAX		INT_MAX
+#define REFCOUNT_SATURATED	INT_MAX
+#else
+#define REFCOUNT_MAX		UINT_MAX
+#define REFCOUNT_SATURATED	UINT_MAX
+#endif
+
 void lkdtm_REFCOUNT_SATURATE_INC(void)
 {
-	refcount_t over = REFCOUNT_INIT(UINT_MAX - 1);
+	refcount_t over = REFCOUNT_INIT(REFCOUNT_MAX - 1);
 
 	pr_info("attempting good refcount decrement\n");
 	refcount_dec(&over);
@@ -148,15 +156,15 @@ void lkdtm_REFCOUNT_SATURATE_INC(void)
 	pr_info("attempting bad refcount inc overflow\n");
 	refcount_inc(&over);
 	refcount_inc(&over);
-	if (refcount_read(&over) == UINT_MAX)
-		pr_err("Correctly stayed saturated, but no BUG?!\n");
+	if (refcount_read(&over) == REFCOUNT_SATURATED)
+		pr_info("Correctly stayed saturated\n");
 	else
 		pr_err("Fail: refcount wrapped\n");
 }
 
 void lkdtm_REFCOUNT_SATURATE_ADD(void)
 {
-	refcount_t over = REFCOUNT_INIT(UINT_MAX - 1);
+	refcount_t over = REFCOUNT_INIT(REFCOUNT_MAX - 1);
 
 	pr_info("attempting good refcount decrement\n");
 	refcount_dec(&over);
@@ -164,8 +172,8 @@ void lkdtm_REFCOUNT_SATURATE_ADD(void)
 
 	pr_info("attempting bad refcount add overflow\n");
 	refcount_add(2, &over);
-	if (refcount_read(&over) == UINT_MAX)
-		pr_err("Correctly stayed saturated, but no BUG?!\n");
+	if (refcount_read(&over) == REFCOUNT_SATURATED)
+		pr_info("Correctly stayed saturated\n");
 	else
 		pr_err("Fail: refcount wrapped\n");
 }
@@ -177,9 +185,17 @@ void lkdtm_REFCOUNT_ZERO_DEC(void)
 	pr_info("attempting bad refcount decrement to zero\n");
 	refcount_dec(&zero);
 	if (refcount_read(&zero) == 0)
-		pr_err("Stayed at zero, but no BUG?!\n");
+		pr_warn("Warn: got to zero\n");
 	else
 		pr_err("Fail: refcount went crazy\n");
+
+	pr_info("attempting bad refcount decrement past 0\n");
+	atomic_set(&zero.refs, 0);
+	refcount_dec(&zero);
+	if (refcount_read(&zero) == REFCOUNT_SATURATED)
+		pr_info("Correctly saturated\n");
+	else
+		pr_err("Fail: wrap not detected\n");
 }
 
 void lkdtm_REFCOUNT_ZERO_SUB(void)
@@ -190,9 +206,16 @@ void lkdtm_REFCOUNT_ZERO_SUB(void)
 	if (!refcount_sub_and_test(2, &zero))
 		pr_info("wrap attempt was noticed\n");
 	if (refcount_read(&zero) == 1)
-		pr_err("Correctly stayed above 0, but no BUG?!\n");
+		pr_info("Correctly stayed above 0\n");
 	else
-		pr_err("Fail: refcount wrapped\n");
+		pr_warn("Warn: refcount passed 0\n");
+
+	pr_info("attempting bad refcount subtract from 0\n");
+	atomic_set(&zero.refs, 0);
+	if (!refcount_sub_and_test(2, &zero))
+		pr_info("wrap attempt was noticed\n");
+	else
+		pr_err("Fail: wrap not detected\n");
 }
 
 void lkdtm_REFCOUNT_ZERO_INC(void)
@@ -200,9 +223,12 @@ void lkdtm_REFCOUNT_ZERO_INC(void)
 	refcount_t zero = REFCOUNT_INIT(0);
 
 	pr_info("attempting bad refcount increment from zero\n");
-	refcount_inc(&zero);
+	if (!refcount_inc_not_zero(&zero))
+		pr_info("Zero detected\n");
 	if (refcount_read(&zero) == 0)
-		pr_err("Stayed at zero, but no BUG?!\n");
+		pr_info("Stayed at zero\n");
+	else if (refcount_read(&zero) == REFCOUNT_SATURATED)
+		pr_info("Correctly saturated\n");
 	else
 		pr_err("Fail: refcount went past zero\n");
 }
