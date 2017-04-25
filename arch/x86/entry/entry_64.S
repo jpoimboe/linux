@@ -855,6 +855,9 @@ idtentry coprocessor_error		do_coprocessor_error		has_error_code=0
 idtentry alignment_check		do_alignment_check		has_error_code=1
 idtentry simd_coprocessor_error		do_simd_coprocessor_error	has_error_code=0
 
+#ifdef CONFIG_FAST_REFCOUNT
+idtentry refcount_error			do_refcount_error		has_error_code=0
+#endif
 
 	/*
 	 * Reload gs selector with exception handling

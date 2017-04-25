@@ -867,4 +867,23 @@ config STRICT_MODULE_RWX
 config ARCH_WANT_RELAX_ORDER
 	bool
 
+config ARCH_HAS_FAST_REFCOUNT
+	bool
+	help
+	  An architecture selects this when it has implemented refcount_t
+	  using primitizes that provide a faster runtime at the expense
+	  of some refcount state checks. The refcount overflow condition,
+	  however, must be retained. Catching overflows is the primary
+	  security concern for protecting against bugs in reference counts.
+
+config FAST_REFCOUNT
+	bool "Speed up reference counting at the expense of full validation"
+	depends on ARCH_HAS_FAST_REFCOUNT
+	help
+	  The regular reference counting infrastructure in the kernel checks
+	  many error conditions. If this option is selected, refcounting
+	  is made faster using architecture-specific implementions that may
+	  only check for reference count overflows (which is the most common
+	  way reference counting bugs are turned into security exploits).
+
 source "kernel/gcov/Kconfig"

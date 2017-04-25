@@ -446,9 +446,18 @@
 		ALIGN_FUNCTION();					\
 		*(.text.hot .text .text.fixup .text.unlikely)		\
 		*(.ref.text)						\
+		REFCOUNT_TEXT						\
 	MEM_KEEP(init.text)						\
 	MEM_KEEP(exit.text)						\
 
+#define __REFCOUNT_TEXT(section)					\
+		VMLINUX_SYMBOL(__##section##_start) = .;                \
+		*(.text.##section)                                      \
+		VMLINUX_SYMBOL(__##section##_end) = .;
+
+#define REFCOUNT_TEXT							\
+	__REFCOUNT_TEXT(refcount_overflow)				\
+	__REFCOUNT_TEXT(refcount_underflow)
 
 /* sched.text is aling to function alignment to secure we have same
  * address even at second ld pass when generating System.map */

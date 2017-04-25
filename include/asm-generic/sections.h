@@ -20,6 +20,8 @@
  *                   may be out of this range on some architectures.
  * [_sinittext, _einittext]: contains .init.text.* sections
  * [__bss_start, __bss_stop]: contains BSS sections
+ * [__refcount_overflow/underflow_start, ..._end]: contains .text sections
+ *		     for refcount error handling.
  *
  * Following global variables are optional and may be unavailable on some
  * architectures and/or kernel configurations.
@@ -39,6 +41,8 @@ extern char __per_cpu_load[], __per_cpu_start[], __per_cpu_end[];
 extern char __kprobes_text_start[], __kprobes_text_end[];
 extern char __entry_text_start[], __entry_text_end[];
 extern char __start_rodata[], __end_rodata[];
+extern char __refcount_overflow_start[], __refcount_overflow_end[];
+extern char __refcount_underflow_start[], __refcount_underflow_end[];
 
 /* Start and end of .ctors section - used for constructor calls. */
 extern char __ctors_start[], __ctors_end[];

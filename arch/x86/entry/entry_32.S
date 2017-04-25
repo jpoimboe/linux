@@ -789,6 +789,15 @@ ENTRY(spurious_interrupt_bug)
 	jmp	common_exception
 END(spurious_interrupt_bug)
 
+#ifdef CONFIG_FAST_REFCOUNT
+ENTRY(refcount_error)
+	ASM_CLAC
+	pushl   $0
+	pushl   $do_refcount_error
+	jmp     common_exception
+ENDPROC(refcount_error)
+#endif
+
 #ifdef CONFIG_XEN
 ENTRY(xen_hypervisor_callback)
 	pushl	$-1				/* orig_ax = -1 => not a system call */

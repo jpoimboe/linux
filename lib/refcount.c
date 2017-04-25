@@ -37,6 +37,9 @@
 #include <linux/refcount.h>
 #include <linux/bug.h>
 
+/* Leave out architecture-specific implementations. */
+#ifndef CONFIG_FAST_REFCOUNT
+
 /**
  * refcount_add_not_zero - add a value to a refcount unless it is 0
  * @i: the value to add to the refcount
@@ -225,6 +228,7 @@ void refcount_dec(refcount_t *r)
 	WARN_ONCE(refcount_dec_and_test(r), "refcount_t: decrement hit 0; leaking memory.\n");
 }
 EXPORT_SYMBOL_GPL(refcount_dec);
+#endif /* CONFIG_FAST_REFCOUNT */
 
 /**
  * refcount_dec_if_one - decrement a refcount if it is 1
@@ -345,4 +349,3 @@ bool refcount_dec_and_lock(refcount_t *r, spinlock_t *lock)
 	return true;
 }
 EXPORT_SYMBOL_GPL(refcount_dec_and_lock);
-

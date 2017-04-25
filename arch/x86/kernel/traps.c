@@ -218,8 +218,13 @@ do_trap_no_signal(struct task_struct *tsk, int trapnr, char *str,
 	}
 
 	if (!user_mode(regs)) {
-		if (fixup_exception(regs, trapnr))
+		if (fixup_exception(regs, trapnr)) {
+			if (IS_ENABLED(CONFIG_FAST_REFCOUNT) &&
+			    trapnr == X86_REFCOUNT_VECTOR)
+				refcount_error_report(regs, str);
+
 			return 0;
+		}
 
 		if (fixup_bug(regs, trapnr))
 			return 0;
@@ -339,6 +344,38 @@ __visible void __noreturn handle_stack_overflow(const char *message,
 
 	/* Be absolutely certain we don't return. */
 	panic(message);
+}
+#endif
+
+#ifdef CONFIG_FAST_REFCOUNT
+
+dotraplinkage void do_refcount_error(struct pt_regs *regs, long error_code)
+{
+	const char *str = NULL;
+
+	BUG_ON(!(regs->flags & X86_EFLAGS_SF));
+
+#define range_check(size, dir, type, value)				   \
+	do {								   \
+		if ((unsigned long)__##size##_##dir##_start <= regs->ip && \
+		    regs->ip < (unsigned long)__##size##_##dir##_end) {	   \
+			*(type *)regs->cx = (value);			   \
+			str = #size " " #dir;				   \
+		}							   \
+	} while (0)
+
+	/*
+	 * Reset to INT_MAX in both cases to attempt to let system
+	 * continue operating.
+	 */
+	range_check(refcount,   overflow,  int, INT_MAX);
+	range_check(refcount,   underflow, int, INT_MAX);
+
+#undef range_check
+
+	BUG_ON(!str);
+	do_error_trap(regs, error_code, (char *)str, X86_REFCOUNT_VECTOR,
+		      SIGILL);
 }
 #endif
 
@@ -1015,6 +1052,11 @@ void __init trap_init(void)
 #ifdef CONFIG_X86_32
 	set_system_intr_gate(IA32_SYSCALL_VECTOR, entry_INT80_32);
 	set_bit(IA32_SYSCALL_VECTOR, used_vectors);
+#endif
+
+#ifdef CONFIG_FAST_REFCOUNT
+	set_intr_gate(X86_REFCOUNT_VECTOR, refcount_error);
+	set_bit(X86_REFCOUNT_VECTOR, used_vectors);
 #endif
 
 	/*
