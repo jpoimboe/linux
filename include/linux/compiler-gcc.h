@@ -198,13 +198,24 @@
 #endif
 
 #ifdef CONFIG_STACK_VALIDATION
-#define annotate_unreachable() ({					\
-	asm("%c0:\t\n"							\
-	    ".pushsection .discard.unreachable\t\n"			\
-	    ".long %c0b - .\t\n"					\
-	    ".popsection\t\n" : : "i" (__LINE__));			\
-})
+/*
+ * This label needs to be unique to prevent GCC from removing what it sees as
+ * duplicate inline asm statements in a function.
+ */
+#define UNREACHABLE_ASM_LABEL __stringify(__LINE__)
+
+/*
+ * Annotate the previous instruction as unreachable.  This allows objtool to
+ * detect dead ends in the code flow.
+ */
+#define UNREACHABLE_ASM							\
+	UNREACHABLE_ASM_LABEL ":\n\t"					\
+	".pushsection .discard.unreachable\n\t"				\
+	".long " UNREACHABLE_ASM_LABEL "b - .\n\t"			\
+	".popsection\n"
+#define annotate_unreachable() asm(UNREACHABLE_ASM);
 #else
+#define UNREACHABLE_ASM
 #define annotate_unreachable()
 #endif
 

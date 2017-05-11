@@ -10,6 +10,7 @@
 	".pushsection .text.unlikely\n"			\
 	"111:\tmovl $0x7fffffff, %[counter]\n"		\
 	"112:\t" ASM_UD0 "\n"				\
+	UNREACHABLE_ASM					\
 	".popsection\n"					\
 	"113:\n"					\
 	_ASM_EXTABLE_REFCOUNT(112b, 113b)
