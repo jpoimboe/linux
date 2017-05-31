@@ -37,10 +37,9 @@ struct section {
 	DECLARE_HASHTABLE(rela_hash, 16);
 	struct section *base, *rela;
 	struct symbol *sym;
-	Elf_Data *elf_data;
+	Elf_Data *data;
 	char *name;
 	int idx;
-	unsigned long data;
 	unsigned int len;
 };
 
