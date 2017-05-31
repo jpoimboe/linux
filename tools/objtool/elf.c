@@ -182,20 +182,19 @@ static int read_sections(struct elf *elf)
 			return -1;
 		}
 
-		sec->elf_data = elf_getdata(s, NULL);
-		if (!sec->elf_data) {
+		sec->data = elf_getdata(s, NULL);
+		if (!sec->data) {
 			perror("elf_getdata");
 			return -1;
 		}
 
-		if (sec->elf_data->d_off != 0 ||
-		    sec->elf_data->d_size != sec->sh.sh_size) {
+		if (sec->data->d_off != 0 ||
+		    sec->data->d_size != sec->sh.sh_size) {
 			WARN("unexpected data attributes for %s", sec->name);
 			return -1;
 		}
 
-		sec->data = (unsigned long)sec->elf_data->d_buf;
-		sec->len = sec->elf_data->d_size;
+		sec->len = sec->data->d_size;
 	}
 
 	/* sanity check, one more call to elf_nextscn() should return NULL */
@@ -232,7 +231,7 @@ static int read_symbols(struct elf *elf)
 
 		sym->idx = i;
 
-		if (!gelf_getsym(symtab->elf_data, i, &sym->sym)) {
+		if (!gelf_getsym(symtab->data, i, &sym->sym)) {
 			perror("gelf_getsym");
 			goto err;
 		}
@@ -322,7 +321,7 @@ static int read_relas(struct elf *elf)
 			}
 			memset(rela, 0, sizeof(*rela));
 
-			if (!gelf_getrela(sec->elf_data, i, &rela->rela)) {
+			if (!gelf_getrela(sec->data, i, &rela->rela)) {
 				perror("gelf_getrela");
 				return -1;
 			}
@@ -361,12 +360,6 @@ struct elf *elf_open(const char *name)
 	memset(elf, 0, sizeof(*elf));
 
 	INIT_LIST_HEAD(&elf->sections);
-
-	elf->name = strdup(name);
-	if (!elf->name) {
-		perror("strdup");
-		goto err;
-	}
 
 	elf->fd = open(name, O_RDONLY);
 	if (elf->fd == -1) {
@@ -421,8 +414,6 @@ void elf_close(struct elf *elf)
 		list_del(&sec->list);
 		free(sec);
 	}
-	if (elf->name)
-		free(elf->name);
 	if (elf->fd > 0)
 		close(elf->fd);
 	if (elf->elf)
