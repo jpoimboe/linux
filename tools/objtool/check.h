@@ -22,12 +22,14 @@
 #include "elf.h"
 #include "cfi.h"
 #include "arch.h"
+#include "undwarf.h"
 #include <linux/hashtable.h>
 
 struct insn_state {
 	struct cfi_reg cfa;
 	struct cfi_reg regs[CFI_NUM_REGS];
 	int stack_size;
+	unsigned char type;
 	bool bp_scratch;
 	bool drap;
 	int drap_reg;
@@ -41,13 +43,14 @@ struct instruction {
 	unsigned int len;
 	unsigned char type;
 	unsigned long immediate;
-	bool alt_group, visited, dead_end, ignore;
+	bool alt_group, visited, dead_end, ignore, needs_cfi;
 	struct symbol *call_dest;
 	struct instruction *jump_dest;
 	struct list_head alts;
 	struct symbol *func;
 	struct stack_op stack_op;
 	struct insn_state state;
+	struct undwarf undwarf;
 };
 
 struct objtool_file {
@@ -58,7 +61,7 @@ struct objtool_file {
 	bool ignore_unreachables, c_file;
 };
 
-int check(const char *objname, bool nofp);
+int check(const char *objname, bool nofp, bool undwarf);
 
 #define for_each_insn(file, insn)					\
 	list_for_each_entry(insn, &file->insn_list, list)
