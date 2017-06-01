@@ -296,6 +296,11 @@ if [ -n "${CONFIG_BUILDTIME_EXTABLE_SORT}" ]; then
 	sortextable vmlinux
 fi
 
+if [ -n "${CONFIG_UNDWARF_UNWINDER}" ]; then
+	info SORTUD vmlinux
+	sortundwarf vmlinux
+fi
+
 info SYSMAP System.map
 mksysmap vmlinux System.map
 

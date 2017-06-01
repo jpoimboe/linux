@@ -324,6 +324,8 @@
 									\
 	TRACEDATA							\
 									\
+	UNDWARF_TABLE							\
+									\
 	/* Kernel symbol table: Normal symbols */			\
 	__ksymtab         : AT(ADDR(__ksymtab) - LOAD_OFFSET) {		\
 		VMLINUX_SYMBOL(__start___ksymtab) = .;			\
@@ -667,6 +669,18 @@
 	}
 #else
 #define BUG_TABLE
+#endif
+
+#ifdef CONFIG_UNDWARF_UNWINDER
+#define UNDWARF_TABLE							\
+	. = ALIGN(16);							\
+	.undwarf : AT(ADDR(.undwarf) - LOAD_OFFSET) {			\
+		VMLINUX_SYMBOL(__undwarf_start) = .;			\
+		KEEP(*(.undwarf))					\
+		VMLINUX_SYMBOL(__undwarf_end) = .;			\
+	}
+#else
+#define UNDWARF_TABLE
 #endif
 
 #ifdef CONFIG_PM_TRACE
