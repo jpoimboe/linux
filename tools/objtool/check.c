@@ -876,6 +876,99 @@ static int add_switch_table_alts(struct objtool_file *file)
 	return 0;
 }
 
+static int read_cfi_hints(struct objtool_file *file)
+{
+	struct section *sec, *relasec;
+	struct rela *rela;
+	struct undwarf_cfi_hint *hint;
+	struct instruction *insn;
+	struct cfi_reg *cfa;
+	int i;
+
+	sec = find_section_by_name(file->elf, ".discard.undwarf_cfi_hints");
+	if (!sec)
+		return 0;
+
+	relasec = sec->rela;
+	if (!relasec) {
+		WARN("missing .rela.discard.undwarf_cfi_hints section");
+		return -1;
+	}
+
+	if (sec->len % sizeof(struct undwarf_cfi_hint)) {
+		WARN("struct undwarf_cfi_hint size mismatch");
+		return -1;
+	}
+
+	file->hints = true;
+
+	for (i = 0; i < sec->len / sizeof(struct undwarf_cfi_hint); i++) {
+		hint = (struct undwarf_cfi_hint *)sec->data->d_buf + i;
+
+		rela = find_rela_by_dest(sec, i * sizeof(*hint));
+		if (!rela) {
+			WARN("can't find rela for undwarf_cfi_hints[%d]", i);
+			return -1;
+		}
+
+		insn = find_insn(file, rela->sym->sec, rela->addend);
+		if (!insn) {
+			WARN("can't find insn for undwarf_cfi_hints[%d]", i);
+			return -1;
+		}
+
+		cfa = &insn->state.cfa;
+
+		if (hint->type == CFI_HINT_TYPE_SAVE) {
+			insn->save = true;
+			continue;
+
+		} else if (hint->type == CFI_HINT_TYPE_RESTORE) {
+			insn->restore = true;
+			insn->hint = true;
+			continue;
+		}
+
+		insn->hint = true;
+
+		switch (hint->cfa_reg) {
+		case UNDWARF_REG_UNDEFINED:
+			cfa->base = CFI_UNDEFINED;
+			break;
+		case UNDWARF_REG_SP:
+			cfa->base = CFI_SP;
+			break;
+		case UNDWARF_REG_BP:
+			cfa->base = CFI_BP;
+			break;
+		case UNDWARF_REG_SP_INDIRECT:
+			cfa->base = CFI_SP_INDIRECT;
+			break;
+		case UNDWARF_REG_R10:
+			cfa->base = CFI_R10;
+			break;
+		case UNDWARF_REG_R13:
+			cfa->base = CFI_R13;
+			break;
+		case UNDWARF_REG_DI:
+			cfa->base = CFI_DI;
+			break;
+		case UNDWARF_REG_DX:
+			cfa->base = CFI_DX;
+			break;
+		default:
+			WARN_FUNC("unsupported undwarf_cfi_hint cfa base reg %d",
+				  insn->sec, insn->offset, hint->cfa_reg);
+			return -1;
+		}
+
+		cfa->offset = hint->cfa_offset;
+		insn->state.type = hint->type;
+	}
+
+	return 0;
+}
+
 static int decode_sections(struct objtool_file *file)
 {
 	int ret;
@@ -903,6 +996,10 @@ static int decode_sections(struct objtool_file *file)
 		return ret;
 
 	ret = add_switch_table_alts(file);
+	if (ret)
+		return ret;
+
+	ret = read_cfi_hints(file);
 	if (ret)
 		return ret;
 
@@ -1380,7 +1477,7 @@ static int validate_branch(struct objtool_file *file, struct instruction *first,
 			   struct insn_state state)
 {
 	struct alternative *alt;
-	struct instruction *insn;
+	struct instruction *insn, *next_insn;
 	struct section *sec;
 	struct symbol *func = NULL;
 	int ret;
@@ -1395,6 +1492,8 @@ static int validate_branch(struct objtool_file *file, struct instruction *first,
 	}
 
 	while (1) {
+		next_insn = next_insn_same_sec(file, insn);
+
 		if (file->c_file && insn->func) {
 			if (func && func != insn->func) {
 				WARN("%s() falls through to next function %s()",
@@ -1406,13 +1505,54 @@ static int validate_branch(struct objtool_file *file, struct instruction *first,
 		func = insn->func;
 
 		if (insn->visited) {
-			if (!!insn_state_match(insn, &state))
+			if (!insn->hint && !insn_state_match(insn, &state))
 				return 1;
 
 			return 0;
 		}
 
-		insn->state = state;
+		if (insn->hint) {
+			if (insn->restore) {
+				struct instruction *save_insn, *i;
+
+				i = insn;
+				save_insn = NULL;
+				func_for_each_insn_continue_reverse(file, func, i) {
+					if (i->save) {
+						save_insn = i;
+						break;
+					}
+				}
+
+				if (!save_insn) {
+					WARN_FUNC("no corresponding CFI save for CFI restore",
+						  sec, insn->offset);
+					return 1;
+				}
+
+				if (!save_insn->visited) {
+					/*
+					 * Oops, no state to copy yet.
+					 * Hopefully we can reach this
+					 * instruction from another branch
+					 * after the save insn has been
+					 * visited.
+					 */
+					if (insn == first)
+						return 0;
+
+					WARN_FUNC("objtool isn't smart enough to handle this CFI save/restore combo",
+						  sec, insn->offset);
+					return 1;
+				}
+
+				insn->state = save_insn->state;
+			}
+
+			state = insn->state;
+
+		} else
+			insn->state = state;
 
 		insn->visited = true;
 
@@ -1487,7 +1627,7 @@ static int validate_branch(struct objtool_file *file, struct instruction *first,
 			return 0;
 
 		case INSN_CONTEXT_SWITCH:
-			if (func) {
+			if (func && (!next_insn || !next_insn->hint)) {
 				WARN_FUNC("unsupported instruction in callable function",
 					  sec, insn->offset);
 				return 1;
@@ -1507,7 +1647,7 @@ static int validate_branch(struct objtool_file *file, struct instruction *first,
 		if (insn->dead_end)
 			return 0;
 
-		insn = next_insn_same_sec(file, insn);
+		insn = next_insn;
 		if (!insn) {
 			WARN("%s: unexpected end of section", sec->name);
 			return 1;
@@ -1515,6 +1655,27 @@ static int validate_branch(struct objtool_file *file, struct instruction *first,
 	}
 
 	return 0;
+}
+
+static int validate_cfi_hints(struct objtool_file *file)
+{
+	struct instruction *insn;
+	int ret, warnings = 0;
+	struct insn_state state;
+
+	if (!file->hints)
+		return 0;
+
+	clear_insn_state(&state);
+
+	for_each_insn(file, insn) {
+		if (insn->hint && !insn->visited) {
+			ret = validate_branch(file, insn, state);
+			warnings += ret;
+		}
+	}
+
+	return warnings;
 }
 
 static bool is_kasan_insn(struct instruction *insn)
@@ -1678,6 +1839,11 @@ int check(const char *_objname, bool _nofp, bool undwarf)
 		goto out;
 
 	ret = validate_functions(&file);
+	if (ret < 0)
+		goto out;
+	warnings += ret;
+
+	ret = validate_cfi_hints(&file);
 	if (ret < 0)
 		goto out;
 	warnings += ret;
