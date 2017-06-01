@@ -1,5 +1,5 @@
 /*
- * sortextable.c: Sort the kernel's exception table
+ * sorttable.c: Sort the kernel's exception table
  *
  * Copyright 2011 - 2012 Cavium, Inc.
  *
@@ -193,9 +193,9 @@ static inline unsigned int get_secindex(unsigned int shndx,
 }
 
 /* 32 bit and 64 bit are very similar */
-#include "sortextable.h"
+#include "sorttable.h"
 #define SORTEXTABLE_64
-#include "sortextable.h"
+#include "sorttable.h"
 
 static int compare_relative_table(const void *a, const void *b)
 {
@@ -367,7 +367,7 @@ main(int argc, char *argv[])
 	int i;
 
 	if (argc < 2) {
-		fprintf(stderr, "usage: sortextable vmlinux...\n");
+		fprintf(stderr, "usage: sorttable vmlinux...\n");
 		return 0;
 	}
 
