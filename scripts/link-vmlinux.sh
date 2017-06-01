@@ -154,7 +154,12 @@ mksysmap()
 
 sortextable()
 {
-	${objtree}/scripts/sorttable ${1}
+	${objtree}/scripts/sorttable ${1} extable
+}
+
+sortundwarf()
+{
+	${objtree}/scripts/sorttable ${1} undwarf
 }
 
 # Delete output files in case of error
