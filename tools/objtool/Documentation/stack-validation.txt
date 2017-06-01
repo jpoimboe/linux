@@ -11,9 +11,6 @@ analyzes every .o file and ensures the validity of its stack metadata.
 It enforces a set of rules on asm code and C inline assembly code so
 that stack traces can be reliable.
 
-Currently it only checks frame pointer usage, but there are plans to add
-CFI validation for C files and CFI generation for asm files.
-
 For each function, it recursively follows all possible code paths and
 validates the correct frame pointer state at each instruction.
 
@@ -22,6 +19,10 @@ It also follows code paths involving special sections, like
 alternative execution paths to a given instruction (or set of
 instructions).  Similarly, it knows how to follow switch statements, for
 which gcc sometimes uses jump tables.
+
+(Objtool also has an 'undwarf generate' subcommand which generates
+debuginfo for the undwarf unwinder.  See Documentation/x86/undwarf.txt
+in the kernel tree for more details.)
 
 
 Why do we need stack metadata validation?
@@ -93,37 +94,14 @@ a) More reliable stack traces for frame pointer enabled kernels
        or at the very end of the function after the stack frame has been
        destroyed.  This is an inherent limitation of frame pointers.
 
-b) 100% reliable stack traces for DWARF enabled kernels
+b) Out-of-band debuginfo generation (undwarf)
 
-   (NOTE: This is not yet implemented)
+   As an alternative to frame pointers, undwarf metadata can be used to
+   walk the stack.  Unlike frame pointers, undwarf is out of band.  So
+   it doesn't affect runtime performance and it can be reliable even
+   when interrupts or exceptions are involved.
 
-   As an alternative to frame pointers, DWARF Call Frame Information
-   (CFI) metadata can be used to walk the stack.  Unlike frame pointers,
-   CFI metadata is out of band.  So it doesn't affect runtime
-   performance and it can be reliable even when interrupts or exceptions
-   are involved.
-
-   For C code, gcc automatically generates DWARF CFI metadata.  But for
-   asm code, generating CFI is a tedious manual approach which requires
-   manually placed .cfi assembler macros to be scattered throughout the
-   code.  It's clumsy and very easy to get wrong, and it makes the real
-   code harder to read.
-
-   Stacktool will improve this situation in several ways.  For code
-   which already has CFI annotations, it will validate them.  For code
-   which doesn't have CFI annotations, it will generate them.  So an
-   architecture can opt to strip out all the manual .cfi annotations
-   from their asm code and have objtool generate them instead.
-
-   We might also add a runtime stack validation debug option where we
-   periodically walk the stack from schedule() and/or an NMI to ensure
-   that the stack metadata is sane and that we reach the bottom of the
-   stack.
-
-   So the benefit of objtool here will be that external tooling should
-   always show perfect stack traces.  And the same will be true for
-   kernel warning/oops traces if the architecture has a runtime DWARF
-   unwinder.
+   For more details, see undwarf.txt.
 
 c) Higher live patching compatibility rate
 
