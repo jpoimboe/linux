@@ -1,5 +1,5 @@
 /*
- * sortextable.h
+ * sorttable.h
  *
  * Copyright 2011 - 2012 Cavium, Inc.
  *
