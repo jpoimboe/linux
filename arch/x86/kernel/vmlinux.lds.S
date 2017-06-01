@@ -148,6 +148,8 @@ SECTIONS
 
 	BUG_TABLE
 
+	ORC_UNWIND_TABLE
+
 	. = ALIGN(PAGE_SIZE);
 	__vvar_page = .;
 
