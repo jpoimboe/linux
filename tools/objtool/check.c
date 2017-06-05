@@ -1386,7 +1386,7 @@ static int update_insn_state(struct instruction *insn, struct insn_state *state)
 	case OP_DEST_LEAVE:
 		if ((!state->drap && cfa->base != CFI_BP) ||
 		    (state->drap && cfa->base != state->drap_reg)) {
-			WARN_FUNC("leave instruction with modified stack frame",
+			WARN_FUNC("leave instruction with modified bot frame",
 				  insn->sec, insn->offset);
 			return -1;
 		}
@@ -1566,7 +1566,7 @@ static int validate_branch(struct objtool_file *file, struct instruction *first,
 
 		case INSN_RETURN:
 			if (func && has_modified_stack_frame(&state)) {
-				WARN_FUNC("return with modified stack frame",
+				WARN_FUNC("return with modified bot frame",
 					  sec, insn->offset);
 				return 1;
 			}
